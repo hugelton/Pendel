@@ -305,6 +305,7 @@ static void session(void)
     /* TAPE, on HOME's band: the push records a take (four plucks, about 1.6 s), closes it, overdubs */
     focus_card(CARD_TAPE);
     EXPECT(app_model()->page == UI_PAGE_HOME && app_model()->focus == CARD_TAPE, "not on the TAPE band");
+    EXPECT(app_model()->nhints == 2 && app_model()->hint_key[0] == UI_KEY_LOOP, "the TAPE band does not name VOL+");
     press(APP_K_SEL, 40);
     static const unsigned per[] = { 168, 200, 224, 252 };
     for (int i = 0; i < 4; i++) {
@@ -345,7 +346,39 @@ static void session(void)
     focus_card(CARD_TAPE);
     press(APP_K_SEL, 900);                         /* held 0.7 s: stop */
     EXPECT(app_model()->loop_state == UI_LOOP_STOP, "not stopped (%d)", app_model()->loop_state);
-    press(APP_K_SEL, 2200);                        /* held 2 s: clear */
+    tap(APP_K_HOME);
+    run(100);
+
+    /* the tape's keys from another page (EFX1 open): VOL- plays the stopped tape from the top, stops it; VOL+ overdubs,
+     * plays; VOL- held 2 s clears; VOL+ records and closes a new take */
+    focus_card(0);
+    tap(APP_K_SEL);
+    run(100);
+    EXPECT(app_model()->page != UI_PAGE_HOME, "EFX1 did not open");
+    tap(APP_K_STOP);
+    run(100);
+    EXPECT(app_model()->loop_state == UI_LOOP_PLAY, "VOL- did not play the stopped tape (%d)", app_model()->loop_state);
+    tap(APP_K_LOOP);
+    run(100);
+    EXPECT(app_model()->loop_state == UI_LOOP_DUB, "VOL+ did not overdub (%d)", app_model()->loop_state);
+    tap(APP_K_LOOP);
+    run(100);
+    EXPECT(app_model()->loop_state == UI_LOOP_PLAY, "VOL+ did not end the overdub (%d)", app_model()->loop_state);
+    tap(APP_K_STOP);
+    run(100);
+    EXPECT(app_model()->loop_state == UI_LOOP_STOP, "VOL- did not stop (%d)", app_model()->loop_state);
+    tap(APP_K_LOOP);
+    run(100);
+    EXPECT(app_model()->loop_state == UI_LOOP_PLAY, "VOL+ did not play the stopped tape (%d)", app_model()->loop_state);
+    press(APP_K_STOP, 2200);                       /* held 2 s: stops at once, then clears */
+    EXPECT(app_model()->loop_state == UI_LOOP_EMPTY, "VOL- held did not clear (%d)", app_model()->loop_state);
+    tap(APP_K_LOOP);
+    run(300);
+    EXPECT(app_model()->loop_state == UI_LOOP_REC, "VOL+ did not record (%d)", app_model()->loop_state);
+    tap(APP_K_LOOP);
+    run(100);
+    EXPECT(app_model()->loop_state == UI_LOOP_PLAY, "VOL+ did not close the take (%d)", app_model()->loop_state);
+    press(APP_K_STOP, 2200);
     EXPECT(app_model()->loop_state == UI_LOOP_EMPTY, "not cleared (%d)", app_model()->loop_state);
     tap(APP_K_HOME);
     run(100);

@@ -8,8 +8,9 @@
  * Keys (Felucca's manners): UP / DN (the LEFT / RIGHT buttons) move the focus, L / R (the knob) set its value, both
  * repeating when held (faster after a second); SEL (the knob's push) acts when let go: on HOME it opens the card in
  * focus; on the TAPE band it records, closes, overdubs (on the press when it starts or closes a take: timing), held
- * 0.7 s it stops, 2 s it clears. L+R: the
- * default. HOME: a tap goes home (or closes MENU), held 0.7 s it opens MENU. LOOP (MIDI, tests): the tape's key.
+ * 0.7 s it stops, 2 s it clears. L+R: the default. HOME: a tap goes home (or closes MENU), held 0.7 s it opens MENU.
+ * LOOP (VOL+) works the tape from any page, on the press: record, close, overdub, play; STOP (VOL-) stops it (stopped:
+ * a tap plays from the top), held 2 s it clears.
  * Pages: HOME, an EFX slot, AMP, MENU. */
 #include "app.h"
 
@@ -22,7 +23,7 @@
 #ifndef APP_POOL
 #define APP_POOL __attribute__((section(".pool")))
 #endif
-#define ARENA_BYTES (320u * 1024u)
+#define ARENA_BYTES (336u * 1024u)
 
 /* ------------------------------------------------------- parameters --- */
 
@@ -559,10 +560,12 @@ static struct {
     uint8_t down;
     uint32_t t0[6], next[6];
     uint8_t used, held;                   /* a bit per key: took part in a combo / its hold fired */
-    uint8_t loop_acted;                   /* the tape's key acted on the press */
-    uint8_t tape_keys;                    /* the keys working the tape this press: LOOP, or the push on the TAPE band */
+    uint8_t loop_acted;                   /* the push on the TAPE band acted on the press */
+    uint8_t tape_keys;                    /* the push, working the tape this press (on the TAPE band) */
     uint32_t home_t0;                     /* HOME: when it went down, and whether its hold (MENU) fired */
     uint8_t home_held;
+    uint32_t stop_t0;                     /* STOP: when it went down; whether it stopped the tape, or its hold cleared it */
+    uint8_t stop_acted, stop_held;
 } k;
 
 static unsigned bit_index(uint8_t b) { unsigned i = 0; while (!(b & 1u)) { b >>= 1; i++; } return i; }
@@ -585,6 +588,21 @@ void app_keys(uint8_t down, uint32_t now)
         ui.menu = 0;
         go(P_HOME);
     }
+    if (pressed & APP_K_STOP) {                              /* STOP: a sounding tape stops at once */
+        int st = pd_looper_state(eng.looper.state);
+        k.stop_t0 = now;
+        k.stop_held = 0;
+        k.stop_acted = st == PD_LOOP_RECORD || st == PD_LOOP_PLAY || st == PD_LOOP_OVERDUB;
+        if (k.stop_acted)
+            pd_looper_stop(eng.looper.state);
+    }
+    if ((down & APP_K_STOP) && !k.stop_held && now - k.stop_t0 >= LOOP_CLEAR_MS) {
+        k.stop_held = 1;                                     /* held 2 s: clear */
+        pd_looper_clear(eng.looper.state);
+    }
+    if ((released & APP_K_STOP) && !k.stop_acted && !k.stop_held
+        && pd_looper_state(eng.looper.state) == PD_LOOP_STOP)
+        pd_looper_press(eng.looper.state);                   /* stopped: a tap plays from the top */
     for (i = 0; i < 6u; i++) {
         uint8_t b = (uint8_t)(1u << i);
         if (!(pressed & b))
@@ -598,17 +616,13 @@ void app_keys(uint8_t down, uint32_t now)
             k.used |= APP_K_L | APP_K_R;
             continue;
         }
-        if ((b == APP_K_L || b == APP_K_R) && (k.down & APP_K_LOOP)) {
-            int32_t l = ui.loop_level + (b == APP_K_R ? 2048 : -2048);
-            ui.loop_level = l < 0 ? 0 : l > 32767 ? 32767 : l;
-            eng.looper.dsp->set_param(eng.looper.state, PD_LOOP_LEVEL, ui.loop_level);
-            k.used |= APP_K_LOOP | b;
-            continue;
-        }
         k.tape_keys &= (uint8_t)~b;
-        if (b == APP_K_LOOP || (b == APP_K_SEL && !(k.down & ~b) && ui.page == P_HOME && ui.home_focus == TAPE_FOCUS))
+        if (b == APP_K_SEL && !(k.down & ~b) && ui.page == P_HOME && ui.home_focus == TAPE_FOCUS)
             k.tape_keys |= b;
-        if (b == APP_K_UP || b == APP_K_DN)
+        if (b == APP_K_LOOP)                                 /* the tape's key, on the press (timing): record, close,
+                                                              * overdub, play */
+            pd_looper_press(eng.looper.state);
+        else if (b == APP_K_UP || b == APP_K_DN)
             move_focus(b == APP_K_UP ? -1 : 1);
         else if (b == APP_K_L || b == APP_K_R)
             adjust(b == APP_K_R ? 1 : -1, 0);
@@ -793,27 +807,24 @@ static uint32_t frac16(uint32_t a, uint32_t b)
 static void fill_loop(void)
 {
     uint32_t len, pos, cap, span, b;
-    const int16_t *s = pd_looper_peek(eng.looper.state, &len, &pos, &cap);
+    const uint8_t *pk = pd_looper_peek(eng.looper.state, &len, &pos, &cap);
     int st = pd_looper_state(eng.looper.state);
     mdl.loop_state = (uint8_t)st;
-    mdl.loop_len_ms = len * 1000u / PD_FS;                  /* (88 k samples * 1000 fits in 32 bits) */
+    mdl.loop_len_ms = len * 1000u / PD_FS;                  /* (397 k samples * 1000 fits in 32 bits) */
     mdl.loop_cap_ms = cap * 1000u / PD_FS;
     mdl.loop_level = (uint16_t)ui.loop_level;
     span = st == PD_LOOP_RECORD ? cap : len;                 /* recording: the ring is the room, filling up */
     mdl.loop_pos = (uint16_t)frac16(pos, span);
     mdl.wave_n = st == PD_LOOP_EMPTY || !span ? 0 : (uint16_t)(len * UI_WAVE / span);
-    for (b = 0; b < mdl.wave_n; b++) {
-        uint32_t a = b * span / UI_WAVE, e = (b + 1u) * span / UI_WAVE, j, pk = 0;
-        uint32_t stride = (e - a) / 48u + 1u;
-        if (e > len)
-            e = len;
-        for (j = a; j < e; j += stride) {
-            uint32_t v = (uint32_t)(s[j] < 0 ? -s[j] : s[j]);
-            if (v > pk)
-                pk = v;
-        }
-        pk >>= 6;                                            /* 0 .. 511, then a soft knee: quiet takes stay visible */
-        mdl.wave[b] = (uint8_t)(pk > 255u ? 255u : pk);
+    for (b = 0; b < mdl.wave_n; b++) {                       /* the blocks' peaks under each bin */
+        uint32_t a = b * span / UI_WAVE / PD_LOOPER_BLOCK, j, m = 0;
+        uint32_t e = ((b + 1u) * span / UI_WAVE + PD_LOOPER_BLOCK - 1u) / PD_LOOPER_BLOCK;
+        if (e > (len + PD_LOOPER_BLOCK - 1u) / PD_LOOPER_BLOCK)
+            e = (len + PD_LOOPER_BLOCK - 1u) / PD_LOOPER_BLOCK;
+        for (j = a; j < e; j++)
+            if (pk[j] > m)
+                m = pk[j];
+        mdl.wave[b] = (uint8_t)m;
     }
 }
 
@@ -965,12 +976,12 @@ static void fill_page(void)
         }
         if (ui.home_focus != TAPE_FOCUS) {
             hints(UI_KEY_UPDN, "SELECT", UI_KEY_LR, "VALUE", UI_KEY_SEL, "OPEN");
-        } else if (mdl.loop_state == UI_LOOP_EMPTY) {    /* the TAPE band: PUSH what comes next, HOLD stop (stopped:
-                                                          * clear), KNOB its level */
-            hints(UI_KEY_SEL, loop_next(), UI_KEY_LR, "LEVEL", 0, 0);
+        } else if (mdl.loop_state == UI_LOOP_EMPTY) {    /* the TAPE band: VOL+ what comes next, VOL- stop (stopped:
+                                                          * play; held: clear), KNOB its level */
+            hints(UI_KEY_LOOP, loop_next(), UI_KEY_LR, "LEVEL", 0, 0);
             mdl.nhints = 2;
         } else {
-            hints(UI_KEY_SEL, loop_next(), UI_KEY_HOLD, mdl.loop_state == UI_LOOP_STOP ? "CLEAR" : "STOP", UI_KEY_LR,
+            hints(UI_KEY_LOOP, loop_next(), UI_KEY_STOP, mdl.loop_state == UI_LOOP_STOP ? "PLAY" : "STOP", UI_KEY_LR,
                   "LEVEL");
         }
         return;

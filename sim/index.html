@@ -39,7 +39,7 @@
   <div class="controls">
     <!-- the Pocket AMP's controls, left to right: the PARAM knob (turn, push), HOME, VOL-, VOL+, LEFT, RIGHT -->
     <button class="k tap" data-k="4">PARAM &#x27F2;</button><button class="k" data-k="16">PUSH</button><button class="k tap" data-k="8">PARAM &#x27F3;</button><span></span>
-    <button class="k" data-k="64">HOME</button><button class="k vol" data-v="-1">VOL-</button><button class="k vol" data-v="1">VOL+</button><span></span>
+    <button class="k" data-k="64">HOME</button><button class="k" data-k="128">VOL- &#x25A0;</button><button class="k" data-k="32">VOL+ &#x25CF;</button><span></span>
     <button class="k" data-k="1">LEFT</button><span></span><button class="k" data-k="2">RIGHT</button><span></span>
   </div>
 </div>
@@ -57,8 +57,8 @@
 </div>
 <p class="help">
   PARAM: <kbd>↑</kbd><kbd>↓</kbd> or the wheel over the screen, <kbd>Enter</kbd> its push. <kbd>←</kbd><kbd>→</kbd> LEFT / RIGHT,
-  <kbd>Esc</kbd> HOME (hold: MENU), <kbd>-</kbd><kbd>=</kbd> VOL. On HOME's TAPE band the push records, closes and overdubs;
-  held it stops (0.7 s) and clears (2 s).
+  <kbd>Esc</kbd> HOME (hold: MENU). The tape, from any page: <kbd>Space</kbd> VOL+ records, closes, overdubs and plays;
+  <kbd>Backspace</kbd> VOL- stops it (stopped: plays from the top), held 2 s it clears.
 </p>
 <script type="module">
 const lcd = document.getElementById('lcd').getContext('2d');
@@ -110,11 +110,9 @@ document.getElementById('palette').onchange = (e) => node && node.port.postMessa
 
 /* a knob detent: a short tap of L or R, as the firmware makes one */
 function tapKey(k) { down |= k; sendKeys(); setTimeout(() => { down &= ~k; sendKeys(); }, 40); }
-function volume(dir) { node && node.port.postMessage({ type: 'volume', dir }); }
 document.getElementById('lcd').addEventListener('wheel', (e) => { e.preventDefault(); tapKey(e.deltaY > 0 ? 4 : 8); }, { passive: false });
-document.querySelectorAll('button.k.vol').forEach(b => b.addEventListener('click', () => volume(+b.dataset.v)));
 document.querySelectorAll('button.k.tap').forEach(b => b.addEventListener('click', () => tapKey(+b.dataset.k)));
-document.querySelectorAll('button.k:not(.vol):not(.tap)').forEach(b => {
+document.querySelectorAll('button.k:not(.tap)').forEach(b => {
   const k = +b.dataset.k;
   b.addEventListener('pointerdown', (e) => { b.setPointerCapture(e.pointerId); down |= k; sendKeys(); });
   const up = () => { down &= ~k; sendKeys(); };
@@ -122,13 +120,12 @@ document.querySelectorAll('button.k:not(.vol):not(.tap)').forEach(b => {
   b.addEventListener('pointercancel', up);
 });
 
-const KEYMAP = { ArrowLeft: 1, ArrowRight: 2, Enter: 16, ' ': 32, Escape: 64 };
+const KEYMAP = { ArrowLeft: 1, ArrowRight: 2, Enter: 16, ' ': 32, Escape: 64, Backspace: 128 };
 const KNOB = { ArrowUp: 8, ArrowDown: 4 };
 const PIANO = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 };
 const held = new Map();
 addEventListener('keydown', (e) => {
   if (KNOB[e.key] !== undefined) { e.preventDefault(); tapKey(KNOB[e.key]); return; }
-  if (e.key === '-' || e.key === '=') { volume(e.key === '=' ? 1 : -1); return; }
   if (e.repeat) { if (KEYMAP[e.key] !== undefined) e.preventDefault(); return; }
   if (KEYMAP[e.key] !== undefined) { e.preventDefault(); down |= KEYMAP[e.key]; sendKeys(); return; }
   const k = e.key.toLowerCase();

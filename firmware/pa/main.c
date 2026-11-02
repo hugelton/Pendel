@@ -86,9 +86,9 @@ static void trace_why(uint32_t why);
 
 /* ---- keys, left to right (pa_input.h bits): 0 PH6 the parameter encoder's push, 1 PH8 HOME, 2 PH9 VOL-, 3 PA0 VOL+,
  * 4 PA1 LEFT, 5 PA3 RIGHT. The push selects, HOME goes home, LEFT / RIGHT move the focus, the encoder changes the
- * value (its detents go straight to app_knob), VOL- / VOL+ step the master level (repeating while held). ---- */
-enum { PK_PUSH, PK_HOME, PK_VDN, PK_VUP, PK_LEFT, PK_RIGHT };
-static const uint8_t KEYMAP[PA_KEYS] = { APP_K_SEL, APP_K_HOME, 0, 0, APP_K_UP, APP_K_DN };
+ * value (its detents go straight to app_knob), VOL+ works the tape and VOL- stops it (the volume is the pot's, and
+ * MENU's MASTER). ---- */
+static const uint8_t KEYMAP[PA_KEYS] = { APP_K_SEL, APP_K_HOME, APP_K_STOP, APP_K_LOOP, APP_K_UP, APP_K_DN };
 #define SPLASH_MS 700u                /* the power-on screen stays this long */
 /* the battery's thresholds on PC10 (SARADC ch9, 0..1023): a 1/2 divider on a 3.3 V reference is assumed, so 3.55 /
  * 3.75 / 3.95 V. PROVISIONAL: PC10 reads 617 on USB power (4.0 V); to check against a discharging unit */
@@ -96,7 +96,6 @@ static const uint8_t KEYMAP[PA_KEYS] = { APP_K_SEL, APP_K_HOME, 0, 0, APP_K_UP, 
 #define BATT_2 581u
 #define BATT_3 612u
 static uint32_t batt_raw;
-#define VOL_REPEAT_MS 120u
 static volatile int32_t enc_steps;
 #define ENC_LOG 256u                  /* the encoder's last line changes, for the console's 'e': state << 14 | 100 us since the last */
 static volatile uint16_t enc_log[ENC_LOG];
@@ -114,7 +113,7 @@ static uint32_t f_us_last, f_us_max, f_count, midi_count;
 static uint32_t blit_us, blit_n, f_blit_us, f_blit_n;   /* the LCD's share of a frame: time and strips sent */
 static uint32_t boot_t0, boot_us[6];
 static uint32_t boot_t4_con, boot_t4_cnt;   /* TIMER4 as the boot loader left it: running since it started? */  /* boot phases, us from fm1_cstart: app_init, LCD, 1st frame, USB, audio, loop */
-static uint32_t inj_key, inj_hold, cur_inj;    /* a key pressed from the console: held for inj_hold ms (8 2 4 6 5 0, + long) */
+static uint32_t inj_key, inj_hold, cur_inj;    /* a key pressed from the console: held for inj_hold ms (8 2 4 6 5 0 1 7, + long) */
 extern void isr_alnk0(void);
 
 void fm1_alnk0_irq(void)
@@ -380,6 +379,7 @@ static void command(char c)
     case '6': inj_key = APP_K_R; break;
     case '5': inj_key = APP_K_SEL; break;
     case '0': inj_key = APP_K_LOOP; break;
+    case '1': inj_key = APP_K_STOP; break;
     case '7': inj_key = APP_K_HOME; break;
     case '+': inj_hold = 900u; break;   /* the next key is a long press */
     case 'a': {                       /* every SARADC channel once, 0..1023 (9999: no answer) */
@@ -582,21 +582,6 @@ static void app_main(void)
                 enc_seen = e;
             }
             key_inject(now);
-            {                         /* VOL- / VOL+: a step on the press, then every VOL_REPEAT_MS after 400 ms */
-                static uint32_t vt0, vnext;
-                uint32_t v = pa_in.down & ((1u << PK_VDN) | (1u << PK_VUP));
-                static uint32_t vlast;
-                if (v && !vlast) {
-                    vt0 = now;
-                    vnext = now + 400u;
-                    app_master_step(v & (1u << PK_VUP) ? 1 : -1);
-                } else if (v && (int32_t)(now - vnext) >= 0) {
-                    vnext = now + VOL_REPEAT_MS;
-                    app_master_step(v & (1u << PK_VUP) ? 1 : -1);
-                }
-                (void)vt0;
-                vlast = v;
-            }
             app_keys((uint8_t)(down | cur_inj), now);
         }
         if (PENDEL_PA_FRAME && now >= SPLASH_MS && now - last_frame >= 33u) {

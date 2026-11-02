@@ -25,7 +25,7 @@ enum {
     UI_G_GAIN,         /* g0 gain, 8192 = 1x */
 };
 
-enum { UI_KEY_SEL, UI_KEY_LOOP, UI_KEY_UPDN, UI_KEY_LR, UI_KEY_HOLD, UI_KEY_HOME };   /* the footer's keycaps: PUSH, LOOP, L/R (the buttons), KNOB, HOLD, HOME */
+enum { UI_KEY_SEL, UI_KEY_LOOP, UI_KEY_UPDN, UI_KEY_LR, UI_KEY_HOLD, UI_KEY_HOME, UI_KEY_STOP };   /* the footer's keycaps: PUSH, VOL+ (the tape), L/R (the buttons), KNOB, HOLD, HOME, VOL- (its stop) */
 
 #define UI_ROWS 12
 #define UI_SCOPE 96        /* scope points */

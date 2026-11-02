@@ -51,7 +51,7 @@ void ui_lint_cell(int32_t x0, int32_t y0, int32_t x1, int32_t y1);      /* a car
 #define MARGIN (3 * U)
 #define ROW_H (5 * U)
 
-static const uint8_t KEY_KC[] = { KC_SEL, KC_LOOP, KC_UPDN, KC_LR, KC_HOLD, KC_HOME };
+static const uint8_t KEY_KC[] = { KC_SEL, KC_LOOP, KC_UPDN, KC_LR, KC_HOLD, KC_HOME, KC_TSTOP };
 
 static int32_t clampi(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 

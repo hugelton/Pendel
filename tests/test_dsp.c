@@ -3,6 +3,7 @@
 /* Host tests for the DSP layer. Each test checks numbers; some also write a WAV to listen to.
  *
  *   test_dsp [WAV_DIR]      (WAVs are skipped when no directory is given) */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -337,10 +338,12 @@ static void test_looper(void)
     pd_sample b[PD_BLOCK];
     unsigned rec = SECONDS(0.5);
 
+    pd_sample *src = calloc(rec, sizeof *src);
     pd_looper_press(l.state);                /* record half a second of A4 */
     CHECK(pd_looper_state(l.state) == PD_LOOP_RECORD, "not recording");
     for (unsigned i = 0; i < rec; i += PD_BLOCK) {
         pd_osc_render(&o, b, PD_BLOCK);
+        memcpy(src + i, b, sizeof b);
         l.dsp->process(l.state, b, b, PD_BLOCK);
     }
     pd_looper_press(l.state);
@@ -361,6 +364,14 @@ static void test_looper(void)
     for (unsigned i = rec - 4; i < rec + 4; i++)
         jump = abs(out[i] - out[i - 1]) > jump ? abs(out[i] - out[i - 1]) : jump;
     CHECK(jump < 2000, "seam jump %d", (int)jump);
+    double es = 0, ss = 0;                   /* the ADPCM loop against what went in, away from the faded seam */
+    for (unsigned i = PD_LOOPER_FADE; i < rec - PD_LOOPER_FADE; i++) {
+        double d = (double)out[rec + i] - src[i];
+        es += d * d;
+        ss += (double)src[i] * src[i];
+    }
+    CHECK(es < ss * 1e-3, "loop SNR %.1f dB, expected over 30", 10 * log10(ss / (es > 0 ? es : 1)));
+    printf("  loop SNR %.1f dB (4-bit ADPCM), %u s\n", 10 * log10(ss / (es > 0 ? es : 1)), PD_LOOPER_SECONDS);
 
     /* overdub doubles the loop with the same signal in phase */
     pd_looper_press(l.state);
@@ -402,6 +413,7 @@ static void test_looper(void)
     CHECK(pd_looper_state(l.state) == PD_LOOP_PLAY && pd_looper_length(l.state) == PD_FS * PD_LOOPER_SECONDS,
           "full: state %d length %u", pd_looper_state(l.state), (unsigned)pd_looper_length(l.state));
     free(out);
+    free(src);
 }
 
 static void test_engine(void)

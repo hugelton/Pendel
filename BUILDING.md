@@ -100,13 +100,14 @@ boot loader.
 | PARAM (push) | opens what is in focus (the scope: MENU at the input's rows); on the TAPE band it works the tape: a tap records, closes the take, overdubs; held 0.7 s it stops, 2 s it clears |
 | LEFT / RIGHT | the focus, on every page: on HOME EFX1, EFX2, EFX3, AMP, the TAPE band, the scope; a row in a list |
 | HOME | home; held 0.7 s: MENU (input gain, gate, low cut, colours, levels, the tempo); in MENU a tap closes it |
-| VOL- / VOL+ | the master level, repeating while held |
+| VOL+ | the tape, from any page, on the press: records, closes the take, overdubs, plays |
+| VOL- | stops the tape (stopped: plays it from the top); held 2 s it clears. The volume is the volume knob (and MENU > MASTER) |
 
 ## Console
 
 Pendel opens a USB serial console: `p` status (audio and frame times, keys, volume, the page), `z` clear the maxima,
-`8 2 4 6 5 0 7` the keys (LEFT, RIGHT, the knob down, the knob up, PUSH, the tape, HOME; `+` before one makes it a
-long press), `a` every ADC channel, `e` the encoder's line changes (state and time) and the timer's longest gap,
+`8 2 4 6 5 0 1 7` the keys (LEFT, RIGHT, the knob down, the knob up, PUSH, VOL+ the tape, VOL- its stop, HOME; `+`
+before one makes it a long press), `a` every ADC channel, `e` the encoder's line changes (state and time) and the timer's longest gap,
 `u` the boot loader, `r` reboot. The status line also gives the frame's and the panel's times, the strips sent, the
 battery's reading, and the boot's phases with the previous boot's trace (`prev_*`: how far it got, why it left for
 the boot loader, the reset's cause).

@@ -27,7 +27,10 @@
 #define APP_SOURCE_SELECT 0                /* 1: the synthesizer as a second source (its code stays; Pendel is input only) */
 #endif
 
-enum { APP_K_UP = 1, APP_K_DN = 2, APP_K_L = 4, APP_K_R = 8, APP_K_SEL = 16, APP_K_LOOP = 32, APP_K_HOME = 64 };
+/* LOOP (VOL+ on the Pocket AMP) works the tape from any page: record, close, overdub, play; STOP (VOL-) stops it, or
+ * plays it again from the top when stopped, held 2 s it clears */
+enum { APP_K_UP = 1, APP_K_DN = 2, APP_K_L = 4, APP_K_R = 8, APP_K_SEL = 16, APP_K_LOOP = 32, APP_K_HOME = 64,
+       APP_K_STOP = 128 };
 
 void app_init(uint32_t palette);
 void app_audio(const int16_t *in, int16_t *out_lr, unsigned frames);

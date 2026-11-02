@@ -38,9 +38,10 @@ KC_H, KC_R, KC_PAD = 13, 4, 3    # the pill: 13 px tall, radius 4, 3 px each sid
 KC_BASE = 10                     # baseline row: the caps on rows 3 .. 9
 
 # (C name, label): the controls the hints name (panel.c B_NAME / E_NAME, short), then the state badges
-# (C name, label): the Pocket AMP's controls as the hints name them (the knob's PUSH, LEFT / RIGHT as L/R, the KNOB
-# itself, HOME), then the state badges
-LABELS = [("SEL", "PUSH"), ("LOOP", "LOOP"), ("UPDN", "L/R"), ("LR", "KNOB"), ("HOLD", "HOLD"), ("HOME", "HOME"),
+# (C name, label): the Pocket AMP's controls as the hints name them (the knob's PUSH, VOL+ the tape's key, LEFT / RIGHT
+# as L/R, the KNOB itself, HOME, VOL- the tape's stop), then the state badges
+LABELS = [("SEL", "PUSH"), ("LOOP", "VOL+"), ("UPDN", "L/R"), ("LR", "KNOB"), ("HOLD", "HOLD"), ("HOME", "HOME"),
+          ("TSTOP", "VOL-"),
           ("ON", "ON"), ("OFF", "OFF"), ("REC", "REC"), ("PLAY", "PLAY"), ("DUB", "DUB"), ("STOP", "STOP"),
           ("MIDI", "MIDI"), ("IN", "IN"), ("SYN", "SYN")]
 
