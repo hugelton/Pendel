@@ -1,0 +1,3 @@
+[submodule "firmware/bsp"]
+	path = firmware/bsp
+	url = https://github.com/hugelton/pendel-bsp.git

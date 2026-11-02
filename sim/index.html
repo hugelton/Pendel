@@ -1,0 +1,146 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: GPL-3.0-only
+     Copyright (C) 2026 Leo Kuroshita (@kurogedelic), Hügelton Instruments -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pendel Simulator</title>
+<style>
+  :root { --bg: #1b1c1e; --body: #2b2d31; --edge: #3a3d42; --key: #44474d; --key-on: #e8b341; --ink: #e9e6df; --mid: #9a978f; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.4 -apple-system, system-ui, sans-serif;
+         display: flex; flex-direction: column; align-items: center; padding: 24px 16px; gap: 20px; }
+  h1 { font-size: 15px; font-weight: 600; margin: 0; letter-spacing: .04em; color: var(--mid); }
+  .device { background: var(--body); border: 1px solid var(--edge); border-radius: 28px; padding: 22px;
+            display: flex; flex-direction: column; align-items: center; gap: 18px; box-shadow: 0 10px 40px #0008; }
+  canvas { width: 480px; height: 480px; max-width: calc(100vw - 80px); max-height: calc(100vw - 80px);
+           image-rendering: pixelated; border-radius: 6px; background: #000; border: 6px solid #111; }
+  .controls { display: grid; grid-template-columns: repeat(3, 64px) 32px 96px; grid-template-rows: repeat(3, 48px);
+              gap: 6px; align-items: center; justify-items: center; }
+  button.k { width: 60px; height: 44px; border-radius: 10px; border: 1px solid var(--edge); background: var(--key);
+             color: var(--ink); font: 600 12px system-ui; letter-spacing: .05em; cursor: pointer; user-select: none;
+             touch-action: none; }
+  button.k.on { background: var(--key-on); color: #222; }
+  button.k.loop { width: 92px; height: 92px; border-radius: 50%; grid-row: 1 / span 3; grid-column: 5; font-size: 14px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; justify-content: center; max-width: 560px; }
+  select, .start { background: var(--key); color: var(--ink); border: 1px solid var(--edge); border-radius: 8px;
+                   padding: 6px 10px; font: inherit; }
+  .start { background: var(--key-on); color: #222; font-weight: 600; cursor: pointer; }
+  .help { color: var(--mid); font-size: 12px; text-align: center; max-width: 560px; }
+  kbd { background: var(--key); border-radius: 4px; padding: 0 5px; color: var(--ink); font-size: 11px; }
+  #status { color: var(--mid); font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>PENDEL · POCKET AMP SIMULATOR</h1>
+<div class="device">
+  <canvas id="lcd" width="240" height="240"></canvas>
+  <div class="controls">
+    <!-- the Pocket AMP's controls, left to right: the PARAM knob (turn, push), HOME, VOL-, VOL+, LEFT, RIGHT -->
+    <button class="k tap" data-k="4">PARAM &#x27F2;</button><button class="k" data-k="16">PUSH</button><button class="k tap" data-k="8">PARAM &#x27F3;</button><span></span>
+    <button class="k" data-k="64">HOME</button><button class="k vol" data-v="-1">VOL-</button><button class="k vol" data-v="1">VOL+</button><span></span>
+    <button class="k" data-k="1">LEFT</button><span></span><button class="k" data-k="2">RIGHT</button><span></span>
+  </div>
+</div>
+<div class="bar">
+  <button class="start" id="start">Start audio</button>
+  <label>Input <select id="input">
+    <option value="demo">Demo guitar</option><option value="mic">Microphone</option><option value="off">Silence</option>
+  </select></label>
+  <label>Palette <select id="palette">
+    <option value="0">GREY</option><option value="1">GREEN</option><option value="2">AMBER</option><option value="3">ICE</option>
+    <option value="4">VIOLET</option><option value="5">ROSE</option><option value="6">PAPER</option><option value="7">NIGHT</option>
+    <option value="8">MONO</option>
+  </select></label>
+  <span id="status">not started</span>
+</div>
+<p class="help">
+  PARAM: <kbd>↑</kbd><kbd>↓</kbd> or the wheel over the screen, <kbd>Enter</kbd> its push. <kbd>←</kbd><kbd>→</kbd> LEFT / RIGHT,
+  <kbd>Esc</kbd> HOME (hold: MENU), <kbd>-</kbd><kbd>=</kbd> VOL. On HOME's TAPE band the push records, closes and overdubs;
+  held it stops (0.7 s) and clears (2 s).
+</p>
+<script type="module">
+const lcd = document.getElementById('lcd').getContext('2d');
+const status = document.getElementById('status');
+let node = null, ctx = null, down = 0, octave = 60;
+
+function sendKeys() {
+  document.querySelectorAll('button.k[data-k]').forEach(b => b.classList.toggle('on', (down & +b.dataset.k) !== 0));
+  node && node.port.postMessage({ type: 'keys', down });
+}
+function midi(data) { node && node.port.postMessage({ type: 'midi', data }); }
+
+async function start() {
+  if (ctx) return;
+  ctx = new AudioContext({ sampleRate: 44118, latencyHint: 'interactive' });
+  await ctx.audioWorklet.addModule('worklet.js?v=' + Date.now());
+  const bytes = await (await fetch('pendel.wasm', { cache: 'no-store' })).arrayBuffer();
+  node = new AudioWorkletNode(ctx, 'pendel', { numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [2] });
+  node.port.onmessage = (e) => {
+    if (e.data.type === 'screen') lcd.putImageData(new ImageData(e.data.px, 240, 240), 0, 0);
+    else if (e.data.type === 'ready') status.textContent = `running at ${e.data.rate} Hz`;
+    else if (e.data.type === 'error') { status.textContent = 'error: ' + e.data.text; console.error(e.data.text); }
+  };
+  node.onprocessorerror = (e) => { status.textContent = 'processor error'; console.error('processor error', e); };
+  node.port.postMessage({ type: 'init', bytes, palette: +document.getElementById('palette').value });
+  node.port.postMessage({ type: 'input', input: document.getElementById('input').value });
+  node.connect(ctx.destination);
+  await ctx.resume();
+  document.getElementById('start').textContent = 'Running';
+  if (navigator.requestMIDIAccess) {
+    try {
+      const m = await navigator.requestMIDIAccess();
+      const hook = () => m.inputs.forEach(i => { i.onmidimessage = (e) => midi(Array.from(e.data)); });
+      hook();
+      m.onstatechange = hook;
+    } catch (_) { /* no MIDI: the computer keyboard still plays */ }
+  }
+}
+document.getElementById('start').onclick = start;
+
+document.getElementById('input').onchange = async (e) => {
+  if (e.target.value === 'mic' && ctx) {
+    const s = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+    ctx.createMediaStreamSource(s).connect(node);
+  }
+  node && node.port.postMessage({ type: 'input', input: e.target.value });
+};
+document.getElementById('palette').onchange = (e) => node && node.port.postMessage({ type: 'palette', palette: +e.target.value });
+
+/* a knob detent: a short tap of L or R, as the firmware makes one */
+function tapKey(k) { down |= k; sendKeys(); setTimeout(() => { down &= ~k; sendKeys(); }, 40); }
+function volume(dir) { node && node.port.postMessage({ type: 'volume', dir }); }
+document.getElementById('lcd').addEventListener('wheel', (e) => { e.preventDefault(); tapKey(e.deltaY > 0 ? 4 : 8); }, { passive: false });
+document.querySelectorAll('button.k.vol').forEach(b => b.addEventListener('click', () => volume(+b.dataset.v)));
+document.querySelectorAll('button.k.tap').forEach(b => b.addEventListener('click', () => tapKey(+b.dataset.k)));
+document.querySelectorAll('button.k:not(.vol):not(.tap)').forEach(b => {
+  const k = +b.dataset.k;
+  b.addEventListener('pointerdown', (e) => { b.setPointerCapture(e.pointerId); down |= k; sendKeys(); });
+  const up = () => { down &= ~k; sendKeys(); };
+  b.addEventListener('pointerup', up);
+  b.addEventListener('pointercancel', up);
+});
+
+const KEYMAP = { ArrowLeft: 1, ArrowRight: 2, Enter: 16, ' ': 32, Escape: 64 };
+const KNOB = { ArrowUp: 8, ArrowDown: 4 };
+const PIANO = { a: 0, w: 1, s: 2, e: 3, d: 4, f: 5, t: 6, g: 7, y: 8, h: 9, u: 10, j: 11, k: 12 };
+const held = new Map();
+addEventListener('keydown', (e) => {
+  if (KNOB[e.key] !== undefined) { e.preventDefault(); tapKey(KNOB[e.key]); return; }
+  if (e.key === '-' || e.key === '=') { volume(e.key === '=' ? 1 : -1); return; }
+  if (e.repeat) { if (KEYMAP[e.key] !== undefined) e.preventDefault(); return; }
+  if (KEYMAP[e.key] !== undefined) { e.preventDefault(); down |= KEYMAP[e.key]; sendKeys(); return; }
+  const k = e.key.toLowerCase();
+  if (k === 'z') octave = Math.max(24, octave - 12);
+  else if (k === 'x') octave = Math.min(96, octave + 12);
+  else if (PIANO[k] !== undefined) { const n = octave + PIANO[k]; held.set(k, n); midi([0x90, n, 100]); }
+});
+addEventListener('keyup', (e) => {
+  if (KEYMAP[e.key] !== undefined) { down &= ~KEYMAP[e.key]; sendKeys(); return; }
+  const k = e.key.toLowerCase();
+  if (held.has(k)) { midi([0x80, held.get(k), 0]); held.delete(k); }
+});
+</script>
+</body>
+</html>
