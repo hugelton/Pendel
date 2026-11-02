@@ -35,20 +35,47 @@ The result is `build/pa/pendel.bin`, an app image linked at 0x02000120. `firmwar
     PENDEL_RELEASE=1.0.0-beta JIELI_TOOLCHAIN=/path/to/toolchain firmware/pa/build.sh
 
 A release build sets the version (`v1.0.0-beta`, on the splash and in MENU > VERSION) and writes
-`build/release-1.0.0-beta/`: `pendel-1.0.0-beta-app.bin`, `SHA256SUMS`, `LICENSE`, `LICENSING.md` and `LICENSES/`
-(with pendel-bsp's `NOTICE`). A release holds the app only, never a flash image: an image carries the unit's own boot
-loader and data, so each user makes theirs from their own backup (below). Tags are `vX.Y.Z` (`v1.0.0-beta`).
+`build/release-1.0.0-beta/`: `pendel-1.0.0-beta.fwsc` (the package, for the installers below),
+`pendel-1.0.0-beta-app.bin`, `SHA256SUMS`, `LICENSE`, `LICENSING.md` and `LICENSES/` (with pendel-bsp's `NOTICE`).
+Tags are `vX.Y.Z` (`v1.0.0-beta`).
+
+The package needs the JieLi AC79 SDK (`AC79_SDK=/path/to/sdk`; three of its files go into the package, see
+[LICENSING.md](LICENSING.md)). Its identity is `Pocket AMP_9XY` for release X.Y (`Pocket AMP_910` for 1.0),
+`Pocket AMP_900` for other builds. `firmware/pa/build.sh` also builds the update loader
+(`build/pa/loader/loader.bin`, from pendel-bsp's `loader/`) and, with `AC79_SDK` set, `build/pa/pendel.fwsc`
+(`tools/pa_pkg_make.py`).
+
+`web/make_site.py PACKAGE.fwsc VERSION OUT_DIR` makes the web installer's site (`installer/`, and the package with its
+licences in `firmware/`).
 
 ## Installing on a Pocket AMP
 
-At your own risk. Pendel never writes the flash itself; installing goes through the chip's USB boot loader with
+At your own risk. Connect the Pocket AMP by USB, directly to the computer.
+
+**From the browser.** The web installer (Chrome or Edge, Web MIDI) installs a package, from the original firmware or
+over an earlier Pendel. **From the command line:** `tools/pa_install.py pendel-X.fwsc` does the same (needs
+`pip install mido python-rtmidi`); `tools/pa_install.py --info` shows what the unit runs.
+
+The update has two steps, as Felucca's: the running firmware checks the package and starts the package's update loader,
+then the loader writes the app area and restarts. Pendel stages the loader at the top of the settings area
+(0xB8000–0xBD000) and writes nothing else; the loader writes the app area only. If the write is cut off, the unit
+stays in update mode: connect it again and install again, and the write continues.
+
+**Back to the official firmware.** Get the official firmware from [M-VAVE](https://www.m-vave.com/download) and
+install the unmodified `Pocket AMP.fwsc` the same way (the web installer's "Return to the official firmware", or
+`tools/pa_install.py "Pocket AMP.fwsc"`). The installers accept that file only by its SHA-256; Pendel's repository
+holds no part of it. Pendel keeps no settings on the unit, so there is nothing to save first.
+
+### Through the boot loader
+
+The way in when a unit does not start, and for development. It goes through the chip's USB boot loader with
 [jl-uboot-tool](https://github.com/kagaimiq/jl-uboot-tool) (installed separately, in its own Python environment) and
 root. Below, `JL` stands for `sudo JLTOOL=/path/to/jl-uboot-tool /path/to/jl-uboot-tool/.venv/bin/python`, and APP for
 the app: a release's `pendel-X-app.bin` (check it against `SHA256SUMS`) or your own `build/pa/pendel.bin`.
 
 1. Enter the boot loader: `tools/pa_dev.py uboot` (a SysEx message from the computer; it works from the original firmware
    and from Pendel; needs `pip install mido python-rtmidi`).
-2. Back up the whole flash first: `JL tools/pa_uboot_dump.py` (two reads, compared). Keep this file: it is the only way
+2. Back up the whole flash first: `JL tools/pa_uboot_dump.py` (two reads, compared). Keep this file: it is the way
    back to your unit's own firmware.
 3. Make the image: `python3 tools/pa_make_image.py BACKUP.bin APP OUT.bin` (standard library only). Only the app area
    changes; the boot loader, the settings and the data stay those of your backup.

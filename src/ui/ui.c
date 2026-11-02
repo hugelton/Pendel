@@ -704,6 +704,21 @@ void ui_splash(const char *version)
     }
     lcd_sync();
 }
+void ui_notice(const char *title, const char *line)
+{
+    uint32_t y;
+    for (y = 0; y < H; y += STRIP) {
+        cv_begin(W, STRIP, T_BG);
+        cv_oy = -(int32_t)y;
+        cv_text_on((W - text_w(&AF_M, title)) / 2, 92, &AF_M, title, T_TEXT, T_BG);
+        if (line)
+            cv_text_on((W - text_w(&AF_S, line)) / 2, 124, &AF_S, line, T_THEME, T_BG);
+        cv_oy = 0;
+        cv_blit(0, y);
+        strip_sig[y / STRIP] = 0;                                     /* the next frame redraws everything */
+    }
+    lcd_sync();
+}
 void ui_palette(uint32_t i) { palette_set(i % NPALETTES); }
 const char *ui_palette_name(uint32_t i) { return UI_PALETTES[i % NPALETTES].name; }
 uint32_t ui_palette_count(void) { return NPALETTES; }

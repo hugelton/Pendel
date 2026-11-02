@@ -91,6 +91,7 @@ void ui_palette(uint32_t i);              /* the colours, live */
 const char *ui_palette_name(uint32_t i);
 uint32_t ui_palette_count(void);
 void ui_splash(const char *version);      /* the power-on screen, straight on the panel */
+void ui_notice(const char *title, const char *line);   /* two centred lines, straight on the panel (the update) */
 void ui_draw(const ui_model_t *m);    /* the whole screen (strips that did not change are not sent) */
 void ui_redraw_all(void);             /* send every strip on the next ui_draw */
 

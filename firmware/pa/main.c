@@ -7,12 +7,21 @@
  *   keys    six buttons and the encoder, mapped onto the app's six logical keys (KEYMAP below; provisional)
  *   screen  app_frame about 30 times a second; its strips go to the ST7789 through lcd_blit
  *   USB     MIDI into app_midi; CDC console (p status, u UBOOT, r reboot); the SysEx soft key enters UBOOT
+ *   update  the M-UPGRADE entry (pendel-bsp chip/ota.c): a host (tools/pa_install.py, the web installer) sends a
+ *           package, its update loader is staged at the top of VM [0xB8000, 0xBD000) and started through the update
+ *           record at 0xBCF00; the loader writes the app area. Nothing else here writes the flash
  *
- * Safe as pa-hwtest: nothing writes the flash, two boots in a row that never reach 2 s drop into UBOOT, and so do a
- * crash and a main loop that stops for 3 s (the timer interrupt watches it): UBOOT can always put an image back. */
+ * Two boots in a row that never reach 2 s drop into UBOOT, and so do a crash and a main loop that stops for 3 s (the
+ * timer interrupt watches it): UBOOT can always put an image back. */
 #include <stdint.h>
 #define FELUCCA_CDC 1
-#define FELUCCA_OTA 0                 /* no update entry: nothing here may write the flash */
+#define FELUCCA_OTA 1                 /* the update entry (ota.c); it writes only its staging area */
+#ifndef PENDEL_PKG
+#define PENDEL_PKG 900                /* the package identity's number: a release is 9XY (X.Y), as Felucca's FM-1_9XY */
+#endif
+#define PD_STR2(x) #x
+#define PD_STR(x) PD_STR2(x)
+#define FELUCCA_ID "Pocket AMP_" PD_STR(PENDEL_PKG)   /* the model hosts check, and the package marker string */
 #define FELUCCA_USB_MANUFACTURER "Hugelton"
 #define FELUCCA_USB_PRODUCT "Pendel"
 #define FELUCCA_USB_PID 0x000A        /* pid.codes test range (1209:0001..000F, not for products): Felucca has 0001 and
@@ -30,6 +39,17 @@
 #include "fm1_adc.h"
 #include "libc.c"
 #include "usb.c"
+/* the update entry: the loader staged at the top of VM (empty under the original firmware too), its record 256 bytes
+ * below the area's end, where the SPL looks. The RAM flash driver may touch this area only */
+#define OTA_AREA 0x000B8000u
+#define OTA_AREA_LEN 0x5000u
+#define OTA_LOADER_ID "ota-Pocket AMP_105"   /* the identity a staged M-VAVE loader answers (the record names it) */
+#define OTA_LOADER_MARK "PENDEL-LOADER-01"
+#define OTA_BOARD "pocketamp"
+#define FL_RANGE_OK(off, n) FL_IN(off, n, OTA_AREA, OTA_AREA + OTA_AREA_LEN)
+#include "fm1_flash.h"
+#include "fm1_flash_ext.h"
+#include "ota.c"
 
 #include "app.h"
 
@@ -45,6 +65,7 @@ extern uint32_t _rt_start[], _rt_end[], _rt_load[], _pool_start[], _pool_end[];
 
 static volatile uint32_t ms, loop_beat;
 static uint32_t boots_ok;
+static uint32_t flash_jedec, flash_ok; /* the flash part's JEDEC id; 1 MiB: the update entry may stage */
 static struct { uint32_t magic, pending, failed; } guard __attribute__((section(".noinit")));
 
 /* The boot trace: how far each boot got and why it left for UBOOT, kept across resets in RAM below the stacks (app.ld
@@ -290,6 +311,7 @@ static void status(void)
         }
     }
     putd("midi=", midi_count);
+    putd("flash=", flash_jedec);
     putd("vol=", (uint32_t)vol_q15);
     putd("batt_raw=", batt_raw);
     putd("keys=", pa_in.down);
@@ -404,6 +426,60 @@ static void midi_drain(void)
         midi_in_overflow = 0;
 }
 
+/* ---- the update entry's hooks (ota.c): its clock, the main loop's heartbeat while it waits on the host, the flash
+ * (the staging area only), its progress on the screen, the commit (the record into RAM, a core reset) ---- */
+static uint32_t ota_now_ms(void) { return ms; }
+static void ota_idle(void)
+{
+    loop_beat = ms;
+    fm1_wdt_feed();
+}
+static int ota_erase(uint32_t off)
+{
+    uint32_t took;
+    if (!FL_RANGE_OK(off, 0x1000u) || (off & 0xFFFu))
+        return -8;
+    return fl_erase4k(off, &took);
+}
+static int ota_prog(uint32_t off, const void *p, uint32_t n)
+{
+    if (!FL_RANGE_OK(off, n))
+        return -8;
+    return fl_write(off, p, n);
+}
+static int ota_fread(uint32_t off, void *p, uint32_t n)
+{
+    uint32_t f = irq_save();
+    int rc = FL_FAR(fl_read_ram)(off, p, n);
+    irq_restore(f);
+    return rc;
+}
+static void ota_show(uint32_t step, int32_t code)
+{
+    static const char *const STEP[] = { "", "PACKAGE", "CHECK HEAD", "LOADER", "CONFIRM", "RESTART" };
+    char b[16] = "FAILED  -";
+    uint32_t k = 9, v = (uint32_t)-code, t;
+    if (step < 9u) {
+        ui_notice("UPDATE", STEP[step < 6u ? step : 0]);
+        return;
+    }
+    if (v >= 10u)
+        b[k++] = (char)('0' + v / 10u % 10u);
+    b[k++] = (char)('0' + v % 10u);
+    b[k] = 0;
+    ui_notice("UPDATE", code == 1 ? "DRY RUN OK" : b);
+    for (t = ms; ms - t < 1500u;)
+        ota_idle();
+}
+static void ota_commit(const uint8_t *parm)
+{
+    guard.pending = 0;                /* an intended reset, not a failed boot */
+    pa_audio_stop();
+    usb_detach();
+    fm1_delay_ms(30);
+    fm1_enter_update(parm);           /* the record into RAM, a core reset: the SPL starts the staged loader */
+}
+
 static void app_main(void)
 {
     uint32_t last_key = 0, last_frame = 0, last_vol = 0, last_batt = 0;
@@ -424,6 +500,14 @@ static void app_main(void)
     FM1_PR(FM1_PC, FM1_PU) |= 3u;     /* the encoder's lines pulled up: without, PC1 came back high tens of ms late and a
                                        * fast turn left it low (only PC0 moving, no detent counted) */
     vol_q15 = 16384;
+    {
+        uint32_t f = irq_save();
+        flash_jedec = FL_FAR(fl_jedec_ram)();
+        irq_restore(f);
+    }
+    flash_ok = fm1_flash_size_from_jedec(flash_jedec) == 0x100000u;
+    if (flash_ok)
+        ota_boot_cleanup();           /* a staging area an update left behind */
     usb_start();
     BOOT_MARK(3);
     trace.phase = PH_USB;
@@ -444,6 +528,17 @@ static void app_main(void)
         if (usb.uboot_req) {          /* the SysEx soft key */
             trace_why(WHY_SOFTKEY);
             leave(1);
+        }
+        ota_service();                /* the M-UPGRADE handshake */
+        if (usb.ota_req) {            /* the M-UPGRADE upgrade command */
+            int32_t v = vol_q15;
+            usb.ota_req = 0;
+            vol_q15 = 0;              /* silence: an erase stops the interrupts and the DMA repeats its half */
+            fm1_delay_ms(5);
+            if (flash_ok)
+                ota_session();        /* returns only if nothing was committed */
+            vol_q15 = v;
+            ui_redraw_all();
         }
         if (!boots_ok && now > 2000u) {
             boots_ok = 1;
