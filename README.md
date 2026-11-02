@@ -2,6 +2,8 @@
 
 [![License: GPL-3.0-only](https://img.shields.io/badge/license-GPL--3.0--only-blue.svg)](LICENSE)
 
+![Pendel's screens: HOME, the effects, the amp, the tape and MENU, in three palettes](docs/screens.png)
+
 ## Overview
 
 Pendel is open-source firmware for the M-VAVE Pocket AMP: an effects unit with a tape loop.

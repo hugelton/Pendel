@@ -9,6 +9,7 @@ Needs a C11 compiler, Python 3 with Pillow and fontTools, and (for the simulator
 | `make` | builds and runs the DSP tests (`tests/test_dsp.c`, ASan and UBSan) |
 | `make wav` | the same, and writes their renders to `build/wav/` |
 | `make ui` | renders a scripted session's screens to `build/ui/*.png` in each palette, with the layout checks |
+| `python3 tools/readme_sheet.py` | after `make ui`: the README's contact sheet, `docs/screens.png` |
 | `make sim` | builds `sim/pendel.wasm`; serve `sim/` over HTTP and open `index.html` |
 | `make FS=48000` | the tables for another sample rate (the Pocket AMP runs at 44118 Hz) |
 
