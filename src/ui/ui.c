@@ -480,7 +480,7 @@ static void card(int32_t c, int focus, const ui_model_t *m)
     int dim = m->card_dim[c];
     uint16_t bg = focus ? focus_bg() : T_SURF;        /* the card in focus: its own colour, no frame */
     uint16_t lc = focus ? T_ACCENT : dim ? T_DIM : T_MID, vc = dim ? T_DIM : T_THEME;
-    cv_rrect(x, CARD_Y, CARD_W, CARD_H, 4, bg, T_BG);
+    cv_panel_in(x, CARD_Y, CARD_W, CARD_H, 4, bg, T_BG);
     LINT_CELL(x, CARD_Y, x + CARD_W, CARD_Y + CARD_H);
     if (m->card_icon[c] && m->card_label[c] && 5 + 12 + 2 + text_w(&AF_S, m->card_label[c]) <= CARD_W - 2) {
         icon_in(lx, CARD_Y + 3 + AF_S_CAP_Y, 12, AF_S_CAP_H, m->card_icon[c] - 1u, 12, lc, bg);
@@ -505,7 +505,7 @@ static void tape_band(const ui_model_t *m, int focus)
     uint16_t vc = m->loop_state == UI_LOOP_EMPTY ? T_THEME : loop_colour(m->loop_state);
     int32_t lx = PANEL_X + 5;
     char len[12], *d;
-    cv_rrect(PANEL_X, TAPE_Y, PANEL_W, TAPE_H, 4, bg, T_BG);
+    cv_panel_in(PANEL_X, TAPE_Y, PANEL_W, TAPE_H, 4, bg, T_BG);
     LINT_CELL(PANEL_X, TAPE_Y, PANEL_X + PANEL_W, TAPE_Y + TAPE_H);
     icon_in(lx, TAPE_Y + 3 + AF_S_CAP_Y, 12, AF_S_CAP_H, IC_LOOP, 12, lc, bg);       /* as a card: name, state, gauge */
     cv_text_on(lx + 14, TAPE_Y + 3, &AF_S, "TAPE", lc, bg);
@@ -536,7 +536,7 @@ static void home(const ui_model_t *m)
         int sf = m->focus == 5;
         uint16_t bg = sf ? focus_bg() : T_SURF, lc = sf ? T_ACCENT : T_MID, vc = T_THEME;
         int32_t lx = PANEL_X + 5, x;
-        cv_rrect(PANEL_X, SCOPE_Y, PANEL_W, SCOPE_H, 4, bg, T_BG);
+        cv_panel_in(PANEL_X, SCOPE_Y, PANEL_W, SCOPE_H, 4, bg, T_BG);
         LINT_CELL(PANEL_X, SCOPE_Y, PANEL_X + PANEL_W, SCOPE_Y + SCOPE_H);
         scope(PANEL_X + 5, SCOPE_Y + 18, PANEL_W - 10, SCOPE_H - 28, m->scope, T_THEME);
         icon_in(lx, SCOPE_Y + 3 + AF_S_CAP_Y, 12, AF_S_CAP_H, IC_INPUT, 12, lc, bg);
@@ -561,7 +561,7 @@ static void home(const ui_model_t *m)
 static void graph(const ui_model_t *m, int32_t x, int32_t y, int32_t w, int32_t h)
 {
     const int32_t *g = m->g;
-    cv_rrect(x, y, w, h, 4, T_SURF, T_BG);
+    cv_panel(x, y, w, h, 4, T_BG);
     LINT_CELL(x, y, x + w, y + h);
     x += 8;
     y += 5;
@@ -636,7 +636,7 @@ static void list_page(const ui_model_t *m)
     if (m->focus >= vis)
         first = m->focus - vis + 1;
     ph = (vis ? vis * (rh + gap) - gap : 0) + 2 * LP_PAD;
-    cv_rrect(LP_X, y0, LP_W, ph, 8, T_SURF, T_BG);
+    cv_panel(LP_X, y0, LP_W, ph, 8, T_BG);
     LINT_CELL(LP_X, y0, LP_X + LP_W, y0 + ph);
     for (i = first; i < n && i < first + vis; i++) {
         const ui_row_t *r = &m->rows[i];

@@ -91,7 +91,7 @@ static uint8_t cv_flip;          /* cv_alpha_hc: the cell mirrored left <-> righ
 static struct {
     uint16_t pal[5];             /* the five as stored: color1 color2 color3 primary secondary (the editor shows them) */
     uint16_t bg, surf, text, theme, accent;
-    uint16_t mid, dim, line, sel, tint, ink, rec, raise, key, lane, grid, ok;
+    uint16_t mid, dim, line, sel, tint, ink, rec, raise, key, lane, grid, ok, edge;
     uint8_t light, mono;
     uint8_t style;               /* MENU > STYLE (ui.c style_apply): ST_FLAT, ST_LINE */
     uint32_t gen;                /* bumped by palette_set (the text ramps follow) */
@@ -116,6 +116,7 @@ static struct {
 #define T_REC ux.rec             /* REC: the palette's primary (red) */
 #define T_WARN ux.rec            /* a warning (low battery, a full name): the primary too */
 #define T_OK ux.ok               /* 1.8: the battery on USB power: green, on every palette (darker on a light BG) */
+#define T_EDGE ux.edge           /* Felucca 2.0's PANEL: a panel's 1 px outline */
 #define T_RAISE ux.raise         /* a raised area on a surface: stubs, guides, slots, chips, button wells */
 #define T_KEY ux.key             /* a keycap's fill (its label: T_INK; unavailable: a T_DIM fill) */
 #define T_LANE ux.lane           /* the piano roll: an in-scale row (SURF -> THEME 10 %) */
@@ -177,13 +178,14 @@ static void palette_set(uint32_t i)
     ux.surf = ux.style ? ux.bg : surf;
     ux.raise = ux_mix(surf, ux.text, UI_RAISE_PCT);
     ux.key = ux_mix(ux.bg, ux.text, UI_KEY_PCT);
+    ux.edge = ux_mix(ux.bg, ux.text, 20);
     ux.lane = ux_mix(ux.surf, ux.theme, 10);
     ux.grid = ux_mix(ux.surf, ux.text, 6);
     ux.light = ux_luma(ux.bg) > 128u;
     ux.ok = ux.light ? UI_OK_LIGHT : UI_OK_DARK;
     if (!cust && i == UI_BW_INDEX) {             /* MONO: black and white, set, not blended (tools/gen_ui_palettes.py) */
         ux.mid = ux.sel = ux.key = p->c3;        /* a selection, a keycap: white, its INK black */
-        ux.dim = ux.line = ux.raise = ux.lane = UI_BW_GREY;   /* the one grey: inactive, tracks, wells */
+        ux.dim = ux.line = ux.raise = ux.lane = ux.edge = UI_BW_GREY;   /* the one grey: inactive, tracks, wells, edges */
         ux.tint = ux.grid = p->c1;
     }
     ux.gen++;                                    /* the text ramps change with the coverage curve */
@@ -340,6 +342,18 @@ static void cv_rrect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint
             cv_pset(x + i, y + h - 1 - j, px);
             cv_pset(x + w - 1 - i, y + h - 1 - j, px);
         }
+}
+
+/* Felucca 2.0's PANEL: a panel (a card, the graph's panel) in `fill` with a 1 px T_EDGE outline, the corners
+ * anti-aliased against `under`; cv_panel fills it SURF */
+static void cv_panel_in(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t fill, uint16_t under)
+{
+    cv_rrect(x, y, w, h, r, T_EDGE, under);
+    cv_rrect(x + 1, y + 1, w - 2, h - 2, r > 1 ? r - 1 : r, fill, T_EDGE);
+}
+static void cv_panel(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint16_t under)
+{
+    cv_panel_in(x, y, w, h, r, T_SURF, under);
 }
 
 /* ------------------------------------------------- 4-bit alpha blit --- */
