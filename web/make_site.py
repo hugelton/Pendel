@@ -5,7 +5,7 @@
 
   index.html                  a redirect to installer/
   installer/index.html        web/index.html, self-contained (papkg.js, paota.js and the metadata inlined)
-  firmware/pendel-VER.fwsc    the package, with LICENSE, LICENSING.md and LICENSES/ (the package holds JieLi SDK
+  firmware/pendel-VER.fwsc    the package, with LICENSE, LICENSING.md and LICENSES/ (and its index; the package holds JieLi SDK
                               files under Apache-2.0, see LICENSING.md)
 
   web/make_site.py PACKAGE.fwsc VERSION OUT_DIR
@@ -64,6 +64,9 @@ def main(pkg, version, out):
     shutil.copyfile(pkg, out / "firmware" / name)
     for p in lic:
         shutil.copyfile(p, out / "firmware" / p.relative_to(ROOT))
+    links = "".join(f'<li><a href="{p.name}">{p.name}</a></li>\n' for p in lic if p.parent.name == "LICENSES")
+    (out / "firmware" / "LICENSES" / "index.html").write_text(      # Pages lists no folders
+        f'<!doctype html>\n<meta charset="utf-8">\n<title>Pendel: licences</title>\n<ul>\n{links}</ul>\n')
     (out / "index.html").write_text('<!doctype html>\n<meta charset="utf-8">\n<title>Pendel</title>\n'
                                     '<meta http-equiv="refresh" content="0; url=installer/">\n'
                                     '<a href="installer/">Pendel installer</a>\n')
