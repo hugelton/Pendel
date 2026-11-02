@@ -419,7 +419,7 @@ applyLang();
 const sayK = (k, arg = "") => { lastKey = k; lastArg = arg; $("status").textContent = t(k) + arg; };
 const say = (txt) => { lastKey = null; $("status").textContent = txt; };
 const log = (s) => { $("log").textContent += s + "\n"; };
-const meta = {"pkg": "../firmware/pendel-1.0.1-beta.fwsc", "version": "1.0.1-beta", "product": "Pocket AMP_910", "size": 685387, "sha256": "f101e10d1db26d3a9b1616d9eabe36e02b62a7a5533356b9082581e2ab9e907b"};
+const meta = {"pkg": "../firmware/pendel-1.0.2-beta.fwsc", "version": "1.0.2-beta", "product": "Pocket AMP_910", "size": 685387, "sha256": "4fca910c15ce6a7a2b4eaca875733df8cb053626b2e799ef32f3779a8e93f417"};
 /* the served package as make_site.py pinned it (size, SHA-256): checked when it loads and again before the write */
 const pinned = async (b) => b.length === meta.size && await sha256hex(b) === meta.sha256;
 
