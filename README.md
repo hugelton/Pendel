@@ -17,6 +17,12 @@ IN → EFX1 → EFX2 → EFX3 → AMP → TAPE
 A sibling of [Felucca](https://github.com/hugelton/Felucca) (the M-VAVE FM-1 firmware), on the same chip and the same
 look. Hardware layer: [pendel-bsp](https://github.com/hugelton/pendel-bsp) (MPL-2.0).
 
+The Pocket AMP firmware is at version 1.0.1 beta. Connect the Pocket AMP to a computer by USB, open the [web
+installer](https://hugelton.github.io/Pendel/) in Chrome or Edge and press Install; no extra hardware is needed.
+Installing is at your own risk: the installer's **Return to the official firmware**, with the official file from
+M-VAVE, takes you back.
+
+- Install: [web installer](https://hugelton.github.io/Pendel/), or `tools/pa_install.py` ([BUILDING.md](BUILDING.md))
 - Build: [BUILDING.md](BUILDING.md)
 - Try: the browser simulator in `sim/`
 
@@ -24,7 +30,7 @@ look. Hardware layer: [pendel-bsp](https://github.com/hugelton/pendel-bsp) (MPL-
 
 | Platform | Status | Notes |
 | --- | --- | --- |
-| M-VAVE Pocket AMP | Beta | 1.0.0 beta. Install: [BUILDING.md](BUILDING.md). |
+| M-VAVE Pocket AMP | Beta | 1.0.1 beta; firmware and [web installer](https://hugelton.github.io/Pendel/) available. |
 | Browser | In progress | The simulator in `sim/`. |
 
 ## AI disclaimer
