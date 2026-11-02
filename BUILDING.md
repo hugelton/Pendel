@@ -98,7 +98,7 @@ boot loader.
 | PARAM (turn) | the value in focus: on HOME an effect's first value, the AMP's gain, the TAPE level or the input gain (the scope); in a list its row |
 | PARAM (push) | opens what is in focus (the scope: MENU at the input's rows); on the TAPE band it works the tape: a tap records, closes the take, overdubs; held 0.7 s it stops, 2 s it clears |
 | LEFT / RIGHT | the focus, on every page: on HOME EFX1, EFX2, EFX3, AMP, the TAPE band, the scope; a row in a list |
-| HOME | home; held 0.7 s: MENU (input gain, gate, low cut, colours, levels); in MENU a tap closes it |
+| HOME | home; held 0.7 s: MENU (input gain, gate, low cut, colours, levels, the tempo); in MENU a tap closes it |
 | VOL- / VOL+ | the master level, repeating while held |
 
 ## Console

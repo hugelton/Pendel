@@ -6,6 +6,9 @@
 
 Pendel is open-source firmware for the M-VAVE Pocket AMP: an effects unit with a tape loop.
 
+**Beta.** This is a beta version: the first full release may change a great deal (the effects, the controls and the
+screen).
+
 ```
 IN → EFX1 → EFX2 → EFX3 → AMP → TAPE
 ```

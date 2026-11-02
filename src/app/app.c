@@ -141,7 +141,7 @@ static struct {
     uint8_t palette;                      /* MENU > COLOR */
     int32_t master, loop_level;
     uint8_t note;
-    uint32_t bpm10;                       /* the tempo (1/10 BPM): 120 until a loop sets it */
+    uint32_t bpm10;                       /* the tempo (1/10 BPM): MENU > TEMPO (120), or a loop's */
     uint32_t loop_len, loop_beats;        /* the loop the tempo was taken from, and its beats */
 } ui;
 
@@ -357,8 +357,10 @@ static void format(char *d, const param_t *p, int32_t v)
 static unit_t *src_unit(void) { return eng.source == PD_SRC_INPUT ? &input_u : &synth_u; }
 
 /* MENU (HOME held): the settings, a list like Felucca's: the knob sets the selected row's value, live */
-enum { MR_IN_GAIN, MR_IN_GATE, MR_IN_LOWCUT, MR_COLOR, MR_MASTER, MR_TAPE, MR_VERSION, MR_CPU, MENU_ROWS };
+enum { MR_IN_GAIN, MR_IN_GATE, MR_IN_LOWCUT, MR_COLOR, MR_MASTER, MR_TAPE, MR_TEMPO, MR_VERSION, MR_CPU, MENU_ROWS };
 #define MENU_HOLD_MS 700u
+#define TEMPO_MIN 400u                             /* MENU > TEMPO, in 1/10 BPM: 40 .. 240, 1 BPM a step */
+#define TEMPO_MAX 2400u
 
 static unsigned page_rows(void)
 {
@@ -423,6 +425,9 @@ static void adjust(int dir, int big)
             app_master_step(dir);
         } else if (r == MR_TAPE) {
             tape_level_add(dir * step);
+        } else if (r == MR_TEMPO && !ui.loop_len) {       /* (a loop holds its own tempo) */
+            int32_t b = (int32_t)ui.bpm10 / 10 * 10 + dir * (big ? 50 : 10);
+            ui.bpm10 = (uint32_t)(b < (int32_t)TEMPO_MIN ? TEMPO_MIN : b > (int32_t)TEMPO_MAX ? TEMPO_MAX : b);
         }
         return;
     case P_SOURCE:
@@ -487,6 +492,8 @@ static void reset_value(void)
         unit_set(&fx_u[ui.edit], r - 2u, KINDS[slot_kind[ui.edit]].p[r - 2u].def);
     } else if (ui.page == P_MENU && r <= MR_IN_LOWCUT) {
         unit_set(&input_u, r, KINDS[K_INPUT].p[r].def);
+    } else if (ui.page == P_MENU && r == MR_TEMPO && !ui.loop_len) {
+        ui.bpm10 = 1200;
     }
 }
 
@@ -810,8 +817,8 @@ static void fill_loop(void)
     }
 }
 
-/* the tempo: a closed loop sets it, taken as 1, 2, 4 .. 64 beats, whichever lands in 70 .. 140 BPM; the beat runs
- * with the loop's position, or free at the tempo when there is no loop */
+/* the tempo: MENU > TEMPO, until a closed loop sets it, taken as 1, 2, 4 .. 64 beats, whichever lands in 70 .. 140
+ * BPM; the beat runs with the loop's position, or free at the tempo when there is no loop */
 static void fill_tempo(void)
 {
     uint32_t len, pos, cap, spb, t;
@@ -970,9 +977,9 @@ static void fill_page(void)
     }
     case P_MENU: {
         static const char *const NAMES[MENU_ROWS] = { "INPUT GAIN", "GATE", "LOW CUT", "COLOR", "MASTER", "TAPE LEVEL",
-                                                      "VERSION", "CPU" };
-        static const uint8_t ICONS[MENU_ROWS] = { IC_AMP, IC_GATE, IC_LOWCUT, IC_COLOR, IC_SPEAKER, IC_LOOP, IC_INFO,
-                                                  IC_INFO };
+                                                      "TEMPO", "VERSION", "CPU" };
+        static const uint8_t ICONS[MENU_ROWS] = { IC_AMP, IC_GATE, IC_LOWCUT, IC_COLOR, IC_SPEAKER, IC_LOOP, IC_TIME,
+                                                  IC_INFO, IC_INFO };
         mdl.title = "MENU";
         mdl.title_icon = IC_MENU + 1u;
         for (r = 0; r < MENU_ROWS; r++)
@@ -987,6 +994,7 @@ static void fill_page(void)
         mdl.rows[MR_COLOR].kind = UI_ROW_COLOR;
         put_s(put_u(mdl.rows[MR_MASTER].value, pct(ui.master)), "%");
         put_s(put_u(mdl.rows[MR_TAPE].value, pct(ui.loop_level)), "%");
+        put_s(put_u(mdl.rows[MR_TEMPO].value, (ui.bpm10 + 5u) / 10u), ui.loop_len ? " LOOP" : " BPM");
         put_s(mdl.rows[MR_VERSION].value, PENDEL_VERSION);
         put_s(put_u(mdl.rows[MR_CPU].value, mdl.cpu_pct), "%");
         n = MENU_ROWS;

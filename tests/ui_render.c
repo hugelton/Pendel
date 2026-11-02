@@ -353,12 +353,22 @@ static void session(void)
 
     press(APP_K_HOME, 800);                        /* HOME held: MENU */
     run(100);
-    EXPECT(app_model()->page == UI_PAGE_LIST && app_model()->nrows == 8, "MENU not open (page %d rows %d)",
+    EXPECT(app_model()->page == UI_PAGE_LIST && app_model()->nrows == 9, "MENU not open (page %d rows %d)",
            app_model()->page, app_model()->nrows);
     tap(APP_K_DN);                                 /* GATE */
     for (int i = 0; i < 12; i++)
         tap(APP_K_R);
     shot("12_menu");
+    for (int i = 0; i < 5; i++)                    /* TEMPO: whole BPM, a step each, with no loop */
+        tap(APP_K_DN);
+    tap(APP_K_R);
+    run(100);
+    unsigned b0 = app_model()->bpm10;
+    for (int i = 0; i < 3; i++)
+        tap(APP_K_R);
+    run(100);
+    EXPECT(app_model()->bpm10 == b0 + 30u && b0 % 10u == 0, "TEMPO: %u then %u", b0, app_model()->bpm10);
+    shot("13_menu_tempo");
     tap(APP_K_HOME);                               /* a tap closes it */
     run(100);
     EXPECT(app_model()->page == UI_PAGE_HOME, "MENU not closed");
