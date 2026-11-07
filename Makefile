@@ -14,7 +14,8 @@ BUILD := build
 CFLAGS := -std=c11 -O2 -g -Wall -Wextra -Wpedantic -Wshadow -Wconversion -Wno-sign-conversion -Werror \
           -fsanitize=address,undefined -fno-sanitize-recover=undefined \
           -Isrc/dsp -I$(BUILD)
-DSP := src/dsp/pd_core.c src/dsp/pd_osc.c src/dsp/pd_modules.c src/dsp/pd_effects.c src/dsp/pd_rack.c src/dsp/pd_looper.c
+DSP := src/dsp/pd_core.c src/dsp/pd_osc.c src/dsp/pd_modules.c src/dsp/pd_effects.c src/dsp/pd_rack.c src/dsp/pd_looper.c \
+       src/dsp/pd_tuner.c src/dsp/pd_metro.c
 
 .PHONY: test wav ui sim clean
 test: $(BUILD)/test_dsp

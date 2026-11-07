@@ -7,17 +7,20 @@
  * through EFX1..3, the amp, then the tape.
  * Keys (Felucca's manners): UP / DN (the LEFT / RIGHT buttons) move the focus, L / R (the knob) set its value, both
  * repeating when held (faster after a second); SEL (the knob's push) acts when let go: on HOME it opens the card in
- * focus; on the TAPE band it records, closes, overdubs (on the press when it starts or closes a take: timing), held
+ * focus (on the scope, IN, the TUNER); on the TAPE band it records, closes, overdubs (on the press when it starts or closes a take: timing), held
  * 0.7 s it stops, 2 s it clears. L+R: the default. HOME: a tap goes home (or closes MENU), held 0.7 s it opens MENU.
  * LOOP (VOL+) works the tape from any page, on the press: record, close, overdub, play; STOP (VOL-) stops it (stopped:
  * a tap plays from the top), held 2 s it clears.
- * Pages: HOME, an EFX slot, AMP, MENU. */
+ * Pages: HOME, an EFX slot, AMP, MENU, and from MENU the METRONOME (its click mixed into the output) and the TUNER
+ * (it listens to the input, the sound going on; also the push on HOME's scope). */
 #include "app.h"
 
 #include "pd_effects.h"
 #include "pd_looper.h"
+#include "pd_metro.h"
 #include "pd_modules.h"
 #include "pd_rack.h"
+#include "pd_tuner.h"
 #include "ui_icons.h"
 
 #ifndef APP_POOL
@@ -47,9 +50,9 @@ typedef struct {
 } kind_t;
 
 static const char *const WAVES[] = { "SAW", "SQUARE", "TRI", "SINE" };
-static const char *const MODES[] = { "LP", "BP", "HP" };
+static const char *const MODES[] = { "LP", "BP", "HP", "LADDER", "SALLEN" };
 static const uint8_t WAVE_IC[] = { IC_SAW, IC_SQUARE, IC_TRI, IC_SINE };
-static const uint8_t MODE_IC[] = { IC_LP, IC_BP, IC_HP };
+static const uint8_t MODE_IC[] = { IC_LP, IC_BP, IC_HP, IC_LP, IC_LP };
 static const char *const AMP_MODELS[PD_AMP_MODELS] = { "OFF", "CLEAN", "CRUNCH", "LEAD" };
 static const char *const OFF_ON[] = { "OFF", "ON" };
 
@@ -72,7 +75,7 @@ static const kind_t KINDS[K_COUNT] = {
       { { "TIME", 12000, F_MS, 0, 0, IC_TIME, 0 }, { "FEEDBACK", 12000, F_PCT, 0, 0, IC_FEEDBACK, 0 } } },
     { "FILTER", IC_FILTER, &PD_FX_FILTER, UI_G_FILTER, PD_FLT_PARAMS,
       { { "CUTOFF", 20000, F_HZ, 0, 0, IC_CUTOFF, 0 }, { "RESONANCE", 6000, F_PCT, 0, 0, IC_RESO, 0 },
-        { "MODE", 0, F_CHOICE, 3, MODES, IC_FILTER, MODE_IC } } },
+        { "MODE", 0, F_CHOICE, PD_FLT_MODES, MODES, IC_FILTER, MODE_IC } } },
     { "GAIN", IC_GAIN, &PD_FX_GAIN, UI_G_GAIN, PD_GAIN_PARAMS, { { "GAIN", 8192, F_X4, 0, 0, IC_GAIN, 0 } } },
     /* pd_effects.c: two values each, the scope above them */
     { "FUZZ", IC_FUZZ, &PD_FX_FUZZ, UI_G_SCOPE, PD_FUZZ_PARAMS,
@@ -121,7 +124,7 @@ static unit_t spare[PD_RACK_SLOTS * 2];   /* effects no slot holds, kept for reu
 static unsigned nspare;
 static ui_model_t mdl;
 
-enum { P_HOME, P_SOURCE, P_FXEDIT, P_MENU, P_COUNT };
+enum { P_HOME, P_SOURCE, P_FXEDIT, P_MENU, P_METRO, P_TUNER, P_COUNT };
 
 /* the three EFX slots: the rack's slots 0..2, always there; an OFF slot is bypassed (its last effect kept) */
 #define NSLOT 3u
@@ -130,7 +133,7 @@ static uint8_t slot_kind[NSLOT];          /* SK_OFF or K_* */
 static const char *const SLOT_NAMES[NSLOT] = { "EFX1", "EFX2", "EFX3" };
 #define AMP_SLOT 3u                       /* the rack's slot 3 (fx_u[3]): the AMP card, always there */
 #define TAPE_FOCUS 4u                     /* HOME: EFX1..3, AMP, then the TAPE band */
-#define SCOPE_FOCUS 5u                    /* and the scope: the input's gain (the push: MENU's input rows) */
+#define SCOPE_FOCUS 5u                    /* and the scope: the input's gain (the push: the TUNER) */
 #define amp_model() ((unsigned)fx_u[AMP_SLOT].v[PD_AMP_MODEL])
 /* an EFX slot's page: TYPE, MIX, then the effect's values; the AMP's: its values alone */
 #define EDIT_FIRST() (ui.edit == AMP_SLOT ? 0u : 2u)
@@ -151,7 +154,25 @@ static struct {
 static int16_t ring_buf[RING];
 static volatile uint32_t ring_w;
 static volatile uint16_t peak_in, peak_out;
-static volatile uint32_t clock_s;           /* samples since start: the free-running beat */
+static volatile uint32_t clock_s;           /* samples since start */
+
+/* the metronome (MENU > METRONOME): its clock is the header's beat; the audio follows the tempo or a loop */
+static pd_metro metro;
+static uint32_t metro_bpm10;                /* the tempo the clock was last set to (audio side) */
+static uint8_t metro_following;             /* the clock follows the loop (audio side) */
+
+/* the tuner (MENU > TUNER): while it is open the input goes, decimated, into the scope's
+ * ring (the scope is not on screen then: the two share its 2 KB) */
+_Static_assert(RING * sizeof ring_buf[0] >= PD_TUNER_N * sizeof(int16_t), "the tuner borrows the scope's ring");
+static pd_tuner tun;
+static volatile uint8_t tuner_on;
+static uint8_t tuner_back;                  /* the page its push goes back to: HOME (from the scope) or MENU */
+static struct {
+    int32_t c16;                            /* the pitch shown, 1/16 cent above note 0, smoothed */
+    uint32_t hz10, t;                       /* its frequency; when it was last heard (ms) */
+    uint8_t ok;
+} tn;
+#define TUNER_HOLD_MS 600u                  /* a pitch stays on screen this long after the string fades */
 
 /* -------------------------------------------------------------- units --- */
 
@@ -302,9 +323,9 @@ static void format(char *d, const param_t *p, int32_t v)
             d = put_u(d, hz / 1000u);
             *d++ = '.';
             *d++ = (char)('0' + hz / 100u % 10u);
-            put_s(d, " KHZ");
+            put_s(d, " kHz");
         } else {
-            put_s(put_u(d, hz), " HZ");
+            put_s(put_u(d, hz), " Hz");
         }
         break;
     }
@@ -358,7 +379,11 @@ static void format(char *d, const param_t *p, int32_t v)
 static unit_t *src_unit(void) { return eng.source == PD_SRC_INPUT ? &input_u : &synth_u; }
 
 /* MENU (HOME held): the settings, a list like Felucca's: the knob sets the selected row's value, live */
-enum { MR_IN_GAIN, MR_IN_GATE, MR_IN_LOWCUT, MR_COLOR, MR_MASTER, MR_TAPE, MR_TEMPO, MR_VERSION, MR_CPU, MENU_ROWS };
+enum { MR_IN_GAIN, MR_IN_GATE, MR_IN_LOWCUT, MR_COLOR, MR_MASTER, MR_TAPE, MR_TEMPO, MR_METRO, MR_TUNER, MR_VERSION, MR_CPU,
+       MENU_ROWS };
+/* METRONOME: the click, the tempo, the beats in a bar, the accent on the first, the click's level */
+enum { MT_CLICK, MT_TEMPO, MT_BEATS, MT_ACCENT, MT_LEVEL, METRO_ROWS };
+#define METRO_LEVEL_DEF 16384
 #define MENU_HOLD_MS 700u
 #define TEMPO_MIN 400u                             /* MENU > TEMPO, in 1/10 BPM: 40 .. 240, 1 BPM a step */
 #define TEMPO_MAX 2400u
@@ -372,6 +397,7 @@ static unsigned page_rows(void)
             return KINDS[K_AMP].np;
         return slot_kind[ui.edit] == SK_OFF ? 1u : 2u + KINDS[slot_kind[ui.edit]].np;   /* TYPE, MIX, params */
     case P_MENU: return MENU_ROWS;
+    case P_METRO: return METRO_ROWS;
     default: return 0;
     }
 }
@@ -380,6 +406,22 @@ static void tape_level_add(int32_t d)
 {
     ui.loop_level = ui.loop_level + d < 0 ? 0 : ui.loop_level + d > 32767 ? 32767 : ui.loop_level + d;
     eng.looper.dsp->set_param(eng.looper.state, PD_LOOP_LEVEL, ui.loop_level);
+}
+
+/* MENU > TEMPO and METRONOME > TEMPO: whole BPM (a loop holds its own tempo) */
+static void tempo_step(int dir, int big)
+{
+    if (ui.loop_len)
+        return;
+    int32_t b = (int32_t)ui.bpm10 / 10 * 10 + dir * (big ? 50 : 10);
+    ui.bpm10 = (uint32_t)(b < (int32_t)TEMPO_MIN ? TEMPO_MIN : b > (int32_t)TEMPO_MAX ? TEMPO_MAX : b);
+}
+
+static void metro_click(int on)
+{
+    if (on && !metro.on && !ui.loop_len)
+        pd_metro_restart(&metro);                        /* switched on: the bar starts now */
+    metro.on = (uint8_t)(on != 0);
 }
 
 /* one step of L/R on the focused thing: dir -1 / +1, big = the repeat's later, faster steps */
@@ -426,10 +468,23 @@ static void adjust(int dir, int big)
             app_master_step(dir);
         } else if (r == MR_TAPE) {
             tape_level_add(dir * step);
-        } else if (r == MR_TEMPO && !ui.loop_len) {       /* (a loop holds its own tempo) */
-            int32_t b = (int32_t)ui.bpm10 / 10 * 10 + dir * (big ? 50 : 10);
-            ui.bpm10 = (uint32_t)(b < (int32_t)TEMPO_MIN ? TEMPO_MIN : b > (int32_t)TEMPO_MAX ? TEMPO_MAX : b);
+        } else if (r == MR_TEMPO) {
+            tempo_step(dir, big);
+        } else if (r == MR_METRO) {
+            metro_click(dir > 0);
         }
+        return;
+    case P_METRO:
+        if (r == MT_CLICK)
+            metro_click(dir > 0);
+        else if (r == MT_TEMPO)
+            tempo_step(dir, big);
+        else if (r == MT_BEATS)
+            pd_metro_beats(&metro, (unsigned)((int)metro.beats + dir));
+        else if (r == MT_ACCENT)
+            metro.accent = dir > 0;
+        else if (r == MT_LEVEL)
+            metro.level = pd_clamp(metro.level + dir * step, 0, 32767);
         return;
     case P_SOURCE:
         if (SRC_ROW && !r) {
@@ -493,13 +548,33 @@ static void reset_value(void)
         unit_set(&fx_u[ui.edit], r - 2u, KINDS[slot_kind[ui.edit]].p[r - 2u].def);
     } else if (ui.page == P_MENU && r <= MR_IN_LOWCUT) {
         unit_set(&input_u, r, KINDS[K_INPUT].p[r].def);
-    } else if (ui.page == P_MENU && r == MR_TEMPO && !ui.loop_len) {
+    } else if ((ui.page == P_MENU && r == MR_TEMPO && !ui.loop_len) || (ui.page == P_METRO && r == MT_TEMPO && !ui.loop_len)) {
         ui.bpm10 = 1200;
+    } else if (ui.page == P_METRO && r == MT_BEATS) {
+        pd_metro_beats(&metro, 4);
+    } else if (ui.page == P_METRO && r == MT_LEVEL) {
+        metro.level = METRO_LEVEL_DEF;
+    }
+}
+
+/* the tuner listens while its page is open, the sound going on (TODO: a long-press way in, with the header's hold
+ * countdown, once that is in) */
+static void tuner_open(int on)
+{
+    if (on && !tuner_on) {
+        pd_tuner_reset(&tun);
+        tn.ok = 0;
+        tuner_on = 1;
+    } else if (!on && tuner_on) {
+        tuner_on = 0;
+        for (unsigned i = 0; i < RING; i++)                  /* the ring is the scope's again */
+            ring_buf[i] = 0;
     }
 }
 
 static void go(unsigned page)
 {
+    tuner_open(page == P_TUNER);
     ui.page = (uint8_t)page;
     unsigned n = page_rows();
     if (n && ui.row[page] >= n)
@@ -510,18 +585,37 @@ static void select_tap(void)
 {
     unsigned r = ui.row[ui.page];
     switch (ui.page) {
-    case P_HOME:                                         /* a card's page: its slot or the AMP; the scope: MENU (the TAPE
-                                                          * band takes the push itself: app_keys) */
+    case P_HOME:                                         /* a card's page: its slot or the AMP; the scope: the TUNER (the
+                                                          * TAPE band takes the push itself: app_keys) */
         if (ui.home_focus <= AMP_SLOT) {
             ui.edit = ui.home_focus;
             ui.row[P_FXEDIT] = ui.edit_row[ui.edit];
             go(P_FXEDIT);
         } else if (ui.home_focus == SCOPE_FOCUS) {
-            ui.row[P_MENU] = MR_IN_GAIN;
-            go(P_MENU);
+            tuner_back = P_HOME;
+            go(P_TUNER);
         }
         break;
     case P_FXEDIT:
+        break;
+    case P_MENU:                                         /* the push opens METRONOME, the TUNER */
+        if (r == MR_METRO)
+            go(P_METRO);
+        else if (r == MR_TUNER) {
+            tuner_back = P_MENU;
+            go(P_TUNER);
+        }
+        break;
+    case P_METRO:                                        /* the push flips a switch */
+        if (r == MT_CLICK)
+            metro_click(!metro.on);
+        else if (r == MT_ACCENT)
+            metro.accent = !metro.accent;
+        break;
+    case P_TUNER:                                        /* the push closes it, back where it was opened */
+        if (tuner_back == P_MENU)
+            ui.row[P_MENU] = MR_TUNER;
+        go(tuner_back == P_MENU ? P_MENU : P_HOME);
         break;
     case P_SOURCE:
         if (SRC_ROW && r == 0)
@@ -706,7 +800,9 @@ static int focus_is_choice(void)                         /* a list of names (TYP
     } else if (ui.page == P_HOME && ui.home_focus < NSLOT && slot_kind[ui.home_focus] != SK_OFF) {
         u = &fx_u[ui.home_focus];
     } else if (ui.page == P_MENU) {
-        return r == MR_COLOR;
+        return r == MR_COLOR || r == MR_METRO;
+    } else if (ui.page == P_METRO) {
+        return r != MT_LEVEL;                            /* (TEMPO: a BPM a detent) */
     }
     return u && pi < KINDS[u->kind].np && KINDS[u->kind].p[pi].choices;
 }
@@ -751,17 +847,44 @@ void app_midi(uint8_t st, uint8_t d1, uint8_t d2)
 
 /* -------------------------------------------------------------- audio --- */
 
+/* the metronome's block: its clock follows a playing loop, or the tempo; its click added to the output */
+static void metro_block(int16_t *out, unsigned n)
+{
+    pd_sample c[PD_BLOCK];
+    int st = pd_looper_state(eng.looper.state);
+    uint32_t len = ui.loop_len, beats = ui.loop_beats;
+    if ((st == PD_LOOP_PLAY || st == PD_LOOP_OVERDUB) && len && beats && len / beats) {
+        uint32_t l, pos, cap;
+        pd_looper_peek(eng.looper.state, &l, &pos, &cap);
+        pd_metro_follow(&metro, pos, len / beats);
+        metro_following = 1;
+    } else if (metro_following || ui.bpm10 != metro_bpm10) {
+        metro_following = 0;
+        metro_bpm10 = ui.bpm10;
+        pd_metro_tempo(&metro, metro_bpm10);
+    }
+    pd_metro_process(&metro, c, n);
+    if (metro.on)
+        for (unsigned i = 0; i < n; i++)
+            out[2 * i] = out[2 * i + 1] = (int16_t)pd_sat16(out[2 * i] + c[i]);
+}
+
 void app_audio(const int16_t *in, int16_t *out, unsigned frames)
 {
     uint32_t pi = 0, po = 0;
     while (frames) {
         unsigned n = frames < PD_BLOCK ? frames : PD_BLOCK;
+        int tuning = tuner_on;
         pd_engine_process(&eng, in, out, n);
+        metro_block(out, n);
+        if (tuning)
+            pd_tuner_feed(&tun, ring_buf, in, n);
         for (unsigned i = 0; i < n; i++) {
             uint32_t a = (uint32_t)(in ? (in[i] < 0 ? -in[i] : in[i]) : 0), b = (uint32_t)(out[2 * i] < 0 ? -out[2 * i] : out[2 * i]);
             if (a > pi) pi = a;
             if (b > po) po = b;
-            ring_buf[(ring_w + i) & (RING - 1u)] = out[2 * i];
+            if (!tuning)
+                ring_buf[(ring_w + i) & (RING - 1u)] = out[2 * i];
         }
         ring_w += n;
         clock_s += n;
@@ -829,10 +952,10 @@ static void fill_loop(void)
 }
 
 /* the tempo: MENU > TEMPO, until a closed loop sets it, taken as 1, 2, 4 .. 64 beats, whichever lands in 70 .. 140
- * BPM; the beat runs with the loop's position, or free at the tempo when there is no loop */
+ * BPM; the beat is the metronome's, which runs with the loop's position (metro_block), or free at the tempo */
 static void fill_tempo(void)
 {
-    uint32_t len, pos, cap, spb, t;
+    uint32_t len, pos, cap;
     int st = pd_looper_state(eng.looper.state);
     pd_looper_peek(eng.looper.state, &len, &pos, &cap);
     if (st != PD_LOOP_EMPTY && st != PD_LOOP_RECORD && len && len != ui.loop_len) {
@@ -845,18 +968,37 @@ static void fill_tempo(void)
     }
     if (st == PD_LOOP_EMPTY)
         ui.loop_len = 0;
-    if (ui.loop_len && st != PD_LOOP_RECORD) {
-        spb = ui.loop_len / ui.loop_beats;
-        t = pos;
-    } else {
-        spb = 600u * PD_FS / (ui.bpm10 ? ui.bpm10 : 1200u);
-        t = clock_s;
-    }
-    if (!spb)
-        spb = 1;
     mdl.bpm10 = (uint16_t)ui.bpm10;
-    mdl.beat = (uint8_t)(t / spb % 4u);
-    mdl.beat_frac = (uint8_t)(t % spb * 255u / spb);
+    mdl.beat = metro.beat;                                   /* the metronome's clock: the loop's or the tempo's */
+    mdl.beat_frac = pd_metro_frac(&metro);
+    mdl.beats = metro.beats;
+    mdl.metro_on = metro.on;
+}
+
+/* the tuner: a look when the audio has filled one; the pitch smoothed while it stays on a note */
+static void fill_tuner(uint32_t now)
+{
+    pd_pitch p;
+    int r = tuner_on ? pd_tuner_poll(&tun, ring_buf, &p) : -1;
+    if (r == 1) {
+        int32_t d = p.c16 - tn.c16;
+        if (tn.ok && d > -400 && d < 400)                    /* within a quarter tone: halfway to it */
+            tn.c16 += d / 2;
+        else
+            tn.c16 = p.c16;
+        tn.hz10 = p.hz10;
+        tn.t = now;
+        tn.ok = 1;
+    } else if (r == 0 && tn.ok && now - tn.t > TUNER_HOLD_MS) {
+        tn.ok = 0;
+    }
+    mdl.tuner_ok = tn.ok;
+    if (tn.ok) {
+        int32_t note = (tn.c16 + 800) / 1600, off = tn.c16 - note * 1600;
+        mdl.tuner_note = (uint8_t)pd_clamp(note, 0, 127);
+        mdl.tuner_cents10 = (int16_t)((off * 10 + (off < 0 ? -8 : 8)) / 16);
+        mdl.tuner_hz10 = tn.hz10;
+    }
 }
 
 static void hints(uint8_t k0, const char *a0, uint8_t k1, const char *a1, uint8_t k2, const char *a2)
@@ -974,7 +1116,9 @@ static void fill_page(void)
             mdl.card_dim[AMP_SLOT] = 0;
             mdl.card_bar[AMP_SLOT] = fx_u[AMP_SLOT].v[PD_AMP_GAIN];
         }
-        if (ui.home_focus != TAPE_FOCUS) {
+        if (ui.home_focus == SCOPE_FOCUS) {
+            hints(UI_KEY_UPDN, "SELECT", UI_KEY_LR, "GAIN", UI_KEY_SEL, "TUNER");
+        } else if (ui.home_focus != TAPE_FOCUS) {
             hints(UI_KEY_UPDN, "SELECT", UI_KEY_LR, "VALUE", UI_KEY_SEL, "OPEN");
         } else if (mdl.loop_state == UI_LOOP_EMPTY) {    /* the TAPE band: VOL+ what comes next, VOL- stop (stopped:
                                                           * play; held: clear), KNOB its level */
@@ -988,9 +1132,9 @@ static void fill_page(void)
     }
     case P_MENU: {
         static const char *const NAMES[MENU_ROWS] = { "INPUT GAIN", "GATE", "LOW CUT", "COLOR", "MASTER", "TAPE LEVEL",
-                                                      "TEMPO", "VERSION", "CPU" };
+                                                      "TEMPO", "METRONOME", "TUNER", "VERSION", "CPU" };
         static const uint8_t ICONS[MENU_ROWS] = { IC_AMP, IC_GATE, IC_LOWCUT, IC_COLOR, IC_SPEAKER, IC_LOOP, IC_TIME,
-                                                  IC_INFO, IC_INFO };
+                                                  IC_METRO, IC_TUNE, IC_INFO, IC_INFO };
         mdl.title = "MENU";
         mdl.title_icon = IC_MENU + 1u;
         for (r = 0; r < MENU_ROWS; r++)
@@ -1006,12 +1150,51 @@ static void fill_page(void)
         put_s(put_u(mdl.rows[MR_MASTER].value, pct(ui.master)), "%");
         put_s(put_u(mdl.rows[MR_TAPE].value, pct(ui.loop_level)), "%");
         put_s(put_u(mdl.rows[MR_TEMPO].value, (ui.bpm10 + 5u) / 10u), ui.loop_len ? " LOOP" : " BPM");
+        put_s(mdl.rows[MR_METRO].value, OFF_ON[metro.on]);
+        mdl.rows[MR_METRO].kind = UI_ROW_SWITCH;
+        put_s(mdl.rows[MR_TUNER].value, "OPEN");
         put_s(mdl.rows[MR_VERSION].value, PENDEL_VERSION);
         put_s(put_u(mdl.rows[MR_CPU].value, mdl.cpu_pct), "%");
         n = MENU_ROWS;
-        hints(UI_KEY_HOME, "CLOSE", UI_KEY_UPDN, "ROW", UI_KEY_LR, "VALUE");
+        if (ui.row[P_MENU] == MR_METRO || ui.row[P_MENU] == MR_TUNER)
+            hints(UI_KEY_HOME, "CLOSE", UI_KEY_UPDN, "ROW", UI_KEY_SEL, "OPEN");
+        else
+            hints(UI_KEY_HOME, "CLOSE", UI_KEY_UPDN, "ROW", UI_KEY_LR, "VALUE");
         break;
     }
+    case P_METRO: {                                      /* the bar's beats on top, then the click's rows */
+        static const char *const NAMES[METRO_ROWS] = { "CLICK", "TEMPO", "BEATS", "ACCENT", "LEVEL" };
+        static const uint8_t ICONS[METRO_ROWS] = { IC_METRO, IC_TIME, IC_BEAT, IC_LEVEL, IC_SPEAKER };
+        mdl.title = "METRONOME";
+        mdl.title_icon = IC_METRO + 1u;
+        for (r = 0; r < METRO_ROWS; r++)
+            row(&mdl.rows[r], NAMES[r], (uint8_t)(ICONS[r] + 1u), r == MT_LEVEL ? metro.level : -1, 0);
+        put_s(mdl.rows[MT_CLICK].value, OFF_ON[metro.on]);
+        mdl.rows[MT_CLICK].kind = UI_ROW_SWITCH;
+        put_s(put_u(mdl.rows[MT_TEMPO].value, (ui.bpm10 + 5u) / 10u), ui.loop_len ? " LOOP" : " BPM");
+        put_s(put_u(mdl.rows[MT_BEATS].value, metro.beats), metro.beats == 1u ? " BEAT" : " BEATS");
+        put_s(mdl.rows[MT_ACCENT].value, OFF_ON[metro.accent]);
+        mdl.rows[MT_ACCENT].kind = UI_ROW_SWITCH;
+        put_s(put_u(mdl.rows[MT_LEVEL].value, pct(metro.level)), "%");
+        n = METRO_ROWS;
+        mdl.graph = UI_G_METRO;
+        mdl.g[0] = metro.beats;
+        mdl.g[1] = metro.beat;
+        mdl.g[2] = pd_metro_frac(&metro);
+        mdl.g[3] = metro.on;
+        mdl.g[4] = metro.accent;
+        hints(UI_KEY_HOME, "BACK", UI_KEY_UPDN, "ROW", UI_KEY_LR, "VALUE");
+        break;
+    }
+    case P_TUNER:                                        /* its own screen: the note, the cents */
+        mdl.page = UI_PAGE_TUNER;
+        mdl.title = "TUNER";
+        mdl.title_icon = IC_TUNE + 1u;
+        mdl.focus = 0;
+        mdl.nrows = 0;
+        hints(UI_KEY_HOME, "HOME", UI_KEY_SEL, "CLOSE", 0, 0);
+        mdl.nhints = 2;
+        return;
     case P_SOURCE: {
         unit_t *u = src_unit();
         mdl.title = KINDS[u->kind].name;
@@ -1059,13 +1242,47 @@ static void fill_page(void)
     mdl.focus = ui.row[ui.page];
 }
 
+/* a hold under way, for the header: where it leads and a count, 5 .. 1, to it (shown after HOLD_SHOW_MS, so a tap
+ * does not flash it) */
+#define HOLD_SHOW_MS 150u
+
+static void hold_set(const char *to, uint32_t t, uint32_t t0, uint32_t end)
+{
+    if (t < HOLD_SHOW_MS || t >= end)
+        return;
+    mdl.hold_to = to;
+    mdl.hold_left = (uint8_t)(((end - t) * 5u + (end - t0) - 1u) / (end - t0));   /* 5, 4, 3, 2, 1 across the hold */
+    mdl.hold_frac = (uint8_t)((t - t0) * 255u / (end - t0));
+}
+
+static void fill_hold(uint32_t now)
+{
+    int st = pd_looper_state(eng.looper.state);
+    unsigned i = bit_index(APP_K_SEL);
+    mdl.hold_to = 0;
+    if ((k.down & APP_K_HOME) && !k.home_held)
+        hold_set(ui.page == P_MENU ? "HOME" : "MENU", now - k.home_t0, 0, MENU_HOLD_MS);
+    else if ((k.down & APP_K_STOP) && !k.stop_held && st != PD_LOOP_EMPTY)
+        hold_set("CLEAR", now - k.stop_t0, 0, LOOP_CLEAR_MS);
+    else if ((k.tape_keys & APP_K_SEL) && (k.down & APP_K_SEL) && !k.loop_acted && !(k.used & APP_K_SEL)
+             && !(k.held & 0x80u) && st != PD_LOOP_EMPTY) {
+        uint32_t t = now - k.t0[i];
+        if (!(k.held & APP_K_SEL) && st != PD_LOOP_STOP)
+            hold_set("STOP", t, 0, LOOP_STOP_MS);
+        else
+            hold_set("CLEAR", t, LOOP_STOP_MS, LOOP_CLEAR_MS);
+    }
+}
+
 void app_frame(uint32_t now)
 {
-    (void)now;
+    fill_hold(now);
     mdl.source = eng.source == PD_SRC_INPUT ? UI_SRC_INPUT : UI_SRC_INSTRUMENT;
     fill_loop();
     fill_tempo();
-    fill_scope();
+    fill_tuner(now);
+    if (!tuner_on)
+        fill_scope();
     /* meters: the peak since the last frame, falling no faster than ~1/8 a frame */
     mdl.in_level = peak_in > mdl.in_level ? peak_in : (uint16_t)(mdl.in_level - (mdl.in_level >> 3));
     mdl.out_level = peak_out > mdl.out_level ? peak_out : (uint16_t)(mdl.out_level - (mdl.out_level >> 3));
@@ -1100,6 +1317,14 @@ void app_init(uint32_t palette)
     zero(ring_buf, sizeof ring_buf);
     nspare = 0;
     ring_w = 0;
+    tuner_on = 0;
+    tuner_back = P_HOME;
+    zero(&tn, sizeof tn);
+    pd_tuner_reset(&tun);
+    pd_metro_init(&metro);
+    metro.level = METRO_LEVEL_DEF;
+    metro_bpm10 = 0;
+    metro_following = 0;
     pd_arena_init(&arena, pool, sizeof pool);
     pd_engine_init(&eng, &arena, PD_FS);
     synth_u.kind = K_SYNTH;

@@ -11,7 +11,7 @@
 
 #include <stdint.h>
 
-enum { UI_PAGE_HOME, UI_PAGE_LIST, UI_PAGES };
+enum { UI_PAGE_HOME, UI_PAGE_LIST, UI_PAGE_TUNER, UI_PAGES };
 enum { UI_SRC_INSTRUMENT, UI_SRC_INPUT };
 enum { UI_LOOP_EMPTY, UI_LOOP_REC, UI_LOOP_PLAY, UI_LOOP_DUB, UI_LOOP_STOP };   /* as pd_looper's states */
 /* the picture on top of a list page; g[] holds its numbers (0 .. 32767 unless noted) */
@@ -23,6 +23,7 @@ enum {
     UI_G_DELAY,        /* the echoes: g0 time, g1 feedback */
     UI_G_FILTER,       /* the response: g0 cutoff, g1 resonance, g2 mode 0 LP 1 BP 2 HP */
     UI_G_GAIN,         /* g0 gain, 8192 = 1x */
+    UI_G_METRO,        /* the bar: g0 beats (1..8), g1 the beat now, g2 how far into it (0..255), g3 the click on, g4 accent */
 };
 
 enum { UI_KEY_SEL, UI_KEY_LOOP, UI_KEY_UPDN, UI_KEY_LR, UI_KEY_HOLD, UI_KEY_HOME, UI_KEY_STOP };   /* the footer's keycaps: PUSH, VOL+ (the tape), L/R (the buttons), KNOB, HOLD, HOME, VOL- (its stop) */
@@ -69,7 +70,10 @@ typedef struct {
     int32_t in_bar;                    /* and its gauge, 0 .. 32767 */
     uint8_t midi_note;                 /* 0: none sounding */
     uint16_t bpm10;                    /* the tempo, in 1/10 BPM */
-    uint8_t beat, beat_frac;           /* the beat in the bar (0 .. 3) and how far into it (0 .. 255) */
+    /* a hold under way: where it leads (0: none) and a count to it; the header shows it in the centre */
+    const char *hold_to;
+    uint8_t hold_left, hold_frac;      /* 5 .. 1; how far along, 0 .. 255 */
+    uint8_t beat, beat_frac;           /* the beat in the bar (0 .. beats - 1) and how far into it (0 .. 255) */
     /* a list page (SOURCE, FX, an effect) */
     const char *title;
     uint8_t title_icon;
@@ -84,6 +88,12 @@ typedef struct {
     uint8_t hint_key[3];
     const char *hint_act[3];
     uint8_t nhints;
+    /* the metronome: the beats in a bar (the header's dots; 0 = 4), the click on */
+    uint8_t beats, metro_on;
+    /* the tuner (UI_PAGE_TUNER): a pitch heard, its nearest note (MIDI), the cents off it (1/10), its frequency (1/10 Hz) */
+    uint8_t tuner_ok, tuner_note;
+    int16_t tuner_cents10;
+    uint32_t tuner_hz10;
 } ui_model_t;
 
 void ui_init(uint32_t palette);

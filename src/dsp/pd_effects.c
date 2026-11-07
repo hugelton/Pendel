@@ -80,7 +80,7 @@ static void fuzz_process(void *st, const pd_sample *in, pd_sample *out, unsigned
         int32_t o = y - x1 + ((y1 * 32735) >> 15);          /* DC blocker, 0.999 */
         x1 = y;
         y1 = lim(o);
-        out[i] = (y1 * 22938) >> 15;                        /* 0.7 */
+        out[i] = (y1 * 3277) >> 15;                         /* 0.1: about level with the dry at -8 dBFS peaks */
     }
     f->x1 = x1;
     f->y1 = y1;
@@ -316,7 +316,7 @@ static void phs_process(void *st, const pd_sample *in, pd_sample *out, unsigned 
         AP(z0, 0) AP(z1, 1) AP(z2, 2) AP(z3, 3)
 #undef AP
         fb = y;
-        out[i] = (((x + y) >> 1) * 19005) >> 14;            /* 0.58 */
+        out[i] = (((x + y) >> 1) * 13107) >> 14;            /* 0.4: the notches' peaks about level with the dry */
     }
     p->z[0] = z0;
     p->z[1] = z1;
@@ -636,12 +636,12 @@ static const char *const AMP_NAMES[PD_AMP_PARAMS] = { "Model", "Gain", "Bass", "
  * (one-pole, 2 pi fc / fs Q15: tighter for more gain), the plate's low-pass (Miller, 1 - e^-w Q15), the tone stack's
  * centre (the cutoff scale), the power stage's drive (Q8) */
 static const struct {
-    int32_t g_lo, g_hi, g2, hp, miller, tone, power;
+    int32_t g_lo, g_hi, g2, hp, miller, tone, power, trim;   /* trim, Q8: the models about level */
 } AMP_MODEL[PD_AMP_MODELS] = {
-    { 0, 0, 0, 0, 0, 0, 0 },
-    { 256, 2560, 0, 187, 20680, 14162, 256 },             /* CLEAN: 1 .. 10x, one stage, 40 Hz, 7 kHz, 400 Hz */
-    { 512, 10240, 1536, 327, 17790, 16454, 384 },         /* CRUNCH: 2 .. 40x then 6x, 70 Hz, 5.5 kHz, 650 Hz */
-    { 1024, 20480, 3072, 560, 17790, 17134, 512 },        /* LEAD: 4 .. 80x then 12x, 120 Hz, 5.5 kHz, 750 Hz */
+    { 0, 0, 0, 0, 0, 0, 0, 256 },
+    { 256, 2560, 0, 187, 20680, 14162, 256, 820 },             /* CLEAN: 1 .. 10x, one stage, 40 Hz, 7 kHz, 400 Hz */
+    { 512, 10240, 1536, 327, 17790, 16454, 384, 128 },         /* CRUNCH: 2 .. 40x then 6x, 70 Hz, 5.5 kHz, 650 Hz */
+    { 1024, 20480, 3072, 560, 17790, 17134, 512, 100 },        /* LEAD: 4 .. 80x then 12x, 120 Hz, 5.5 kHz, 750 Hz */
 };
 
 typedef struct {
@@ -773,9 +773,9 @@ static void amp_process(void *st, const pd_sample *in, pd_sample *out, unsigned 
         pd_svf_process(&a->cab_lp2, out, out, frames);
     }
     {   /* the level, 0 .. 0.5x, ramped across the block */
-        int32_t g = a->cur, step = (a->level - g) / (int32_t)frames;
+        int32_t g = a->cur, step = (a->level - g) / (int32_t)frames, tr = AMP_MODEL[a->model].trim;
         for (unsigned i = 0; i < frames; i++, g += step)
-            out[i] = (lim(out[i]) * g) >> 16;
+            out[i] = lim((((lim(out[i]) * g) >> 16) * tr) >> 8);   /* < 2^15 * 2^10: in 32 bits */
         a->cur = a->level;
     }
 }

@@ -12,9 +12,11 @@
 #include "../host/wav.h"
 #include "pd_effects.h"
 #include "pd_looper.h"
+#include "pd_metro.h"
 #include "pd_modules.h"
 #include "pd_osc.h"
 #include "pd_rack.h"
+#include "pd_tuner.h"
 
 static int fails, checks;
 static const char *wav_dir;
@@ -169,6 +171,110 @@ static void test_filter(void)
             peak = abs(b[j]) > peak ? abs(b[j]) : peak;
     }
     CHECK(peak <= 65535, "resonant peak %d", (int)peak);
+
+    /* little resonance and a cutoff of 7 kHz and up (where a Chamberlin SVF runs away): a low-pass passes 1 kHz */
+    for (int32_t c = 27700; c <= PD_PARAM_MAX; c += 1010) {
+        pd_svf t = { .mode = PD_SVF_LP };
+        pd_svf_set(&t, c, 1638);
+        o = (pd_osc){ .inc = (uint32_t)(1000.0 / PD_FS * 4294967296.0), .wave = PD_WAVE_SINE };
+        double ri = 0, ro = 0;
+        for (unsigned i = 0; i < SECONDS(0.5) / PD_BLOCK; i++) {
+            pd_sample in[PD_BLOCK];
+            pd_osc_render(&o, in, PD_BLOCK);
+            pd_svf_process(&t, in, b, PD_BLOCK);
+            if (i > 100) {
+                ri += rms(in, PD_BLOCK);
+                ro += rms(b, PD_BLOCK);
+            }
+        }
+        CHECK(ro / ri > 0.97 && ro / ri < 1.03, "LP at %d, resonance 5%%, passes 1 kHz at %.3f", (int)c, ro / ri);
+    }
+}
+
+/* the Filter effect in a mode: its gain for a sine at hz, its peak on a full-scale square at 55 Hz */
+static double flt_gain(int mode, int32_t cutoff, int32_t res, double hz, int32_t *peak)
+{
+    static int64_t st[64];
+    CHECK(PD_FX_FILTER.state_size <= sizeof st, "filter state %u B", PD_FX_FILTER.state_size);
+    memset(st, 0, sizeof st);
+    PD_FX_FILTER.init(st, NULL, PD_FS);
+    PD_FX_FILTER.set_param(st, PD_FLT_MODE, (2 * mode + 1) * 32768 / (2 * PD_FLT_MODES));
+    PD_FX_FILTER.set_param(st, PD_FLT_CUTOFF, cutoff);
+    PD_FX_FILTER.set_param(st, PD_FLT_RESONANCE, res);
+    pd_osc o = { .inc = (uint32_t)(hz / PD_FS * 4294967296.0), .wave = PD_WAVE_SINE };
+    pd_sample in[PD_BLOCK], out[PD_BLOCK];
+    double ri = 0, ro = 0;
+    for (unsigned i = 0; i < SECONDS(0.5) / PD_BLOCK; i++) {
+        pd_osc_render(&o, in, PD_BLOCK);
+        PD_FX_FILTER.process(st, in, out, PD_BLOCK);
+        if (i > 100) {
+            ri += rms(in, PD_BLOCK);
+            ro += rms(out, PD_BLOCK);
+        }
+    }
+    if (peak) {
+        PD_FX_FILTER.reset(st);
+        o = (pd_osc){ .inc = pd_pitch_inc(33 << 8), .wave = PD_WAVE_SQUARE };
+        *peak = 0;
+        for (unsigned i = 0; i < SECONDS(0.3) / PD_BLOCK; i++) {
+            pd_osc_render(&o, in, PD_BLOCK);
+            for (unsigned j = 0; j < PD_BLOCK; j++)
+                in[j] = in[j] < 0 ? -32768 : 32767;
+            PD_FX_FILTER.process(st, in, out, PD_BLOCK);
+            for (unsigned j = 0; j < PD_BLOCK; j++)
+                *peak = abs(out[j]) > *peak ? abs(out[j]) : *peak;
+        }
+    }
+    return ro / ri;
+}
+
+static void test_filter_modes(void)
+{
+    static const char *const NAME[] = { "LADDER", "SALLEN" };
+    for (int m = PD_FLT_LADDER; m <= PD_FLT_SK; m++) {
+        const char *n = NAME[m - PD_FLT_LADDER];
+        double pass = flt_gain(m, 24000, 0, 100, NULL), stop = flt_gain(m, 8000, 0, 5000, NULL);
+        CHECK(pass > 0.9 && pass < 1.1, "%s 3.4 kHz passes 100 Hz at %.3f", n, pass);
+        CHECK(stop < (m == PD_FLT_LADDER ? 0.0005 : 0.005), "%s 108 Hz passes 5 kHz at %.5f", n, stop);
+        /* the resonance peaks at the cutoff: 1 kHz through a 1 kHz filter, little and much resonance */
+        double lo = flt_gain(m, 20500, 3000, 1000, NULL), hi = flt_gain(m, 20500, 26000, 1000, NULL);
+        CHECK(hi > lo * 1.5, "%s resonance: %.3f at 5%%, %.3f at 80%%", n, lo, hi);
+        /* every cutoff and resonance, a full-scale square: bounded (UBSan catches an overflow) */
+        int32_t worst = 0;
+        for (int32_t c = 0; c <= PD_PARAM_MAX; c += 4681)
+            for (int32_t r = 0; r <= PD_PARAM_MAX; r += 8191) {
+                int32_t p;
+                double g = flt_gain(m, c, r, 440, &p);
+                CHECK(g == g && g < 40, "%s at %d / %d: gain %.2f", n, (int)c, (int)r, g);
+                worst = p > worst ? p : worst;
+            }
+        CHECK(worst <= 65535, "%s peak %d", n, (int)worst);
+        /* little resonance and a high cutoff: 1 kHz passes, nothing runs away */
+        for (int32_t c = 27700; c <= PD_PARAM_MAX; c += 1010) {
+            double g = flt_gain(m, c, 1638, 1000, NULL);
+            CHECK(g > (m == PD_FLT_LADDER ? 0.85 : 0.9) && g < 1.1, "%s at %d, resonance 5%%, passes 1 kHz at %.3f", n,
+                  (int)c, g);                                     /* (the ladder loses some with resonance) */
+        }
+    }
+    /* full resonance rings on by itself after a click */
+    for (int m = PD_FLT_LADDER; m <= PD_FLT_SK; m++) {
+        static int64_t st[64];
+        memset(st, 0, sizeof st);
+        PD_FX_FILTER.init(st, NULL, PD_FS);
+        PD_FX_FILTER.set_param(st, PD_FLT_MODE, (2 * m + 1) * 32768 / (2 * PD_FLT_MODES));
+        PD_FX_FILTER.set_param(st, PD_FLT_CUTOFF, 20500);
+        PD_FX_FILTER.set_param(st, PD_FLT_RESONANCE, PD_PARAM_MAX);
+        pd_sample b[PD_BLOCK];
+        double e = 0;
+        for (unsigned i = 0; i < SECONDS(1) / PD_BLOCK; i++) {
+            for (unsigned j = 0; j < PD_BLOCK; j++)
+                b[j] = i == 0 && j == 0 ? 16000 : 0;
+            PD_FX_FILTER.process(st, b, b, PD_BLOCK);
+            if (i > SECONDS(0.8) / PD_BLOCK)
+                e = rms(b, PD_BLOCK);
+        }
+        CHECK(e > 100, "%s at full resonance: rms %.1f after 1 s", NAME[m - PD_FLT_LADDER], e);
+    }
 }
 
 static void test_delay(void)
@@ -625,6 +731,62 @@ static void test_effects(void)
 }
 
 /* the amp: every model at the ends of gain and tone, past full scale; OFF passes; quiet in silence; its cost */
+/* the effects about level: plucked strings at -8 dBFS peaks through each at its defaults (the app's), the RMS within
+ * 3.5 dB of the dry (not asked: the ones that colour the level by design, a tremolo, a room, and the high-pass, which
+ * takes a guitar's body away at 1.4 kHz) */
+static double pluck_at(unsigned i)
+{
+    static const double hz[] = { 82.41, 110, 146.83, 196, 246.94, 329.63, 164.8, 123.47 };
+    unsigned note = i / (PD_FS / 2) % 8u;
+    double t = (double)(i % (PD_FS / 2)) / PD_FS, s = 0;
+    for (int h = 1; h <= 12; h++)
+        s += sin(2 * M_PI * hz[note] * h * t) / h * exp(-t * (2.0 + h * 0.8));
+    return 8000 * s * exp(-t * 3);
+}
+
+static void test_levels(void)
+{
+#define CH(v, n) ((int32_t)(((2 * (v) + 1) * 32768) / (2 * (n))))
+    static const struct { const char *name; const PendelDSP *dsp; unsigned np; int32_t v[7]; } fx[] = {
+        { "DRIVE", &PD_FX_DRIVE, 3, { 12000, 20000, 20000 } },
+        { "FILTER LP", &PD_FX_FILTER, 3, { 20000, 6000, CH(0, PD_FLT_MODES) } },
+        { "FILTER BP", &PD_FX_FILTER, 3, { 20000, 6000, CH(1, PD_FLT_MODES) } },
+        { "FILTER LADDER", &PD_FX_FILTER, 3, { 20000, 6000, CH(3, PD_FLT_MODES) } },
+        { "FILTER SALLEN", &PD_FX_FILTER, 3, { 20000, 6000, CH(4, PD_FLT_MODES) } },
+        { "FUZZ", &PD_FX_FUZZ, 2, { 16000, 6000 } },
+        { "FLANGER", &PD_FX_FLANGER, 2, { 9000, 16000 } },
+        { "PHASER", &PD_FX_PHASER, 2, { 9000, 20000 } },
+        { "AMP CLEAN", &PD_FX_AMP, 7, { CH(1, 4), 12000, 16384, 16384, 16384, 16384, CH(1, 2) } },
+        { "AMP CRUNCH", &PD_FX_AMP, 7, { CH(2, 4), 12000, 16384, 16384, 16384, 16384, CH(1, 2) } },
+        { "AMP LEAD", &PD_FX_AMP, 7, { CH(3, 4), 12000, 16384, 16384, 16384, 16384, CH(1, 2) } },
+    };
+#undef CH
+    for (unsigned k = 0; k < sizeof fx / sizeof fx[0]; k++) {
+        pd_arena a;
+        pd_node n;
+        pd_arena_init(&a, pool, sizeof pool);
+        CHECK(pd_node_make(&n, &a, fx[k].dsp, PD_FS) == 0, "%s fits the pool", fx[k].name);
+        for (unsigned p = 0; p < fx[k].np; p++)
+            n.dsp->set_param(n.state, p, fx[k].v[p]);
+        n.dsp->reset(n.state);
+        double ei = 0, eo = 0;
+        for (unsigned i = 0; i < SECONDS(4); i += PD_BLOCK) {
+            pd_sample b[PD_BLOCK], d[PD_BLOCK];
+            for (unsigned j = 0; j < PD_BLOCK; j++)
+                b[j] = d[j] = (pd_sample)lrint(pluck_at(i + j));
+            n.dsp->process(n.state, b, b, PD_BLOCK);
+            if (i >= SECONDS(0.5))
+                for (unsigned j = 0; j < PD_BLOCK; j++) {
+                    ei += (double)d[j] * d[j];
+                    eo += (double)b[j] * b[j];
+                }
+        }
+        double db = 10 * log10(eo / ei);
+        printf("  %-14s %+5.1f dB\n", fx[k].name, db);
+        CHECK(fabs(db) < 3.5, "%s: %+.1f dB against the dry", fx[k].name, db);
+    }
+}
+
 static void test_amp(void)
 {
     const unsigned n = SECONDS(0.5);
@@ -692,6 +854,265 @@ static void test_amp(void)
     free(out);
 }
 
+
+/* ----------------------------------------------------------------- tuner --- */
+
+/* feeds `n` samples of src through the tuner in blocks, as the audio does; the last look's result (and how many
+ * looks found a pitch, of how many) */
+static int tuner_listen(const int16_t *src, unsigned n, pd_pitch *last, unsigned *looks)
+{
+    static int16_t buf[PD_TUNER_N];
+    pd_tuner t;
+    pd_tuner_reset(&t);
+    int found = 0;
+    *looks = 0;
+    for (unsigned i = 0; i + PD_BLOCK <= n; i += PD_BLOCK) {
+        pd_tuner_feed(&t, buf, src + i, PD_BLOCK);
+        pd_pitch p;
+        int r = pd_tuner_poll(&t, buf, &p);
+        if (r < 0)
+            continue;
+        if (++*looks == 1)
+            continue;                        /* (the first look holds the filter's start) */
+        if (r == 1) {
+            found++;
+            *last = p;
+        }
+    }
+    return found;
+}
+
+static double cents_of(double hz) { return 1200.0 * log2(hz / 8.175798915643707); }
+
+static void test_tuner(void)
+{
+    unsigned n = SECONDS(0.6);                 /* six looks */
+    int16_t *s = mono_buf(n);
+    pd_sample blk[PD_BLOCK];
+
+    /* log2 */
+    double worst_l = 0;
+    for (uint32_t v = 1; v < 0x7FFFFFFFu; v = v * 3u + 7u) {
+        double e = fabs(pd_log2_q16(v) / 65536.0 - log2((double)v));
+        if (e > worst_l)
+            worst_l = e;
+    }
+    CHECK(worst_l < 3.0 / 65536, "log2 off by %.6f", worst_l);
+
+    /* E1 .. E6, every semitone, in tune and off (by +14 and -35 cents), sine and saw, loud and quiet */
+    static const int detune[] = { 0, 37, -90 };     /* 1/256 semitone */
+    static const char *const wname[] = { "sine", "saw" };
+    for (int w = 0; w < 2; w++) {
+        double worst = 0;
+        int missed = 0, wrong = 0, tried = 0;
+        for (int note = 28; note <= 88; note++)
+            for (unsigned dt = 0; dt < 3; dt++)
+                for (int loud = 0; loud < 2; loud++) {
+                    pd_osc o = { .inc = pd_pitch_inc((note << 8) + detune[dt]),
+                                 .wave = (uint8_t)(w ? PD_WAVE_SAW : PD_WAVE_SINE) };
+                    int32_t amp = loud ? 12000 : 600;
+                    for (unsigned i = 0; i < n; i += PD_BLOCK) {
+                        pd_osc_render(&o, blk, PD_BLOCK);
+                        for (unsigned j = 0; j < PD_BLOCK; j++)
+                            s[i + j] = (int16_t)((blk[j] * amp) >> 15);
+                    }
+                    double hz = (double)o.inc * PD_FS / 4294967296.0, want = cents_of(hz);
+                    pd_pitch p;
+                    unsigned looks;
+                    int f = tuner_listen(s, n, &p, &looks);
+                    tried++;
+                    if (f < (int)looks - 1) {
+                        missed++;
+                        continue;
+                    }
+                    double got = p.c16 / 16.0, e = fabs(got - want);
+                    int near = (int)floor(want / 100.0 + 0.5);
+                    if (p.note != near || e > 2.0 || fabs(p.hz10 / 10.0 - hz) > hz * 0.002 + 0.1) {
+                        if (wrong < 4)
+                            printf("  %s note %d %+d/256: got note %d %+.1f c (%.1f Hz), want %.2f c (%.2f Hz)\n",
+                                   wname[w], note, detune[dt], p.note, p.cents10 / 10.0, p.hz10 / 10.0,
+                                   want - near * 100, hz);
+                        wrong++;
+                    }
+                    if (e > worst)
+                        worst = e;
+                }
+        CHECK(!missed && !wrong, "%s: %d of %d missed, %d wrong", wname[w], missed, tried, wrong);
+        printf("  %s E1..E6, %d tones: worst %.3f cents\n", wname[w], tried, worst);
+    }
+
+    /* silence, white noise, low-passed noise: no pitch */
+    {
+        uint32_t seed = 12345;
+        int32_t lp = 0;
+        pd_pitch p;
+        unsigned looks;
+        memset(s, 0, n * sizeof *s);
+        CHECK(tuner_listen(s, n, &p, &looks) == 0 && looks > 3, "silence: a pitch");
+        for (int kind = 0; kind < 3; kind++) {
+            for (unsigned i = 0; i < n; i++) {
+                seed = seed * 1664525u + 1013904223u;
+                int32_t v = (int32_t)(seed >> 16) - 32768;
+                lp += (v - lp) >> (kind == 2 ? 3 : 1);
+                s[i] = (int16_t)(kind ? lp / 3 : v / 3);
+            }
+            int f = tuner_listen(s, n, &p, &looks);
+            CHECK(f == 0, "noise %d: a pitch in %d of %u looks (note %d)", kind, f, looks - 1, p.note);
+        }
+    }
+
+    /* the cost: a look at E2 and at noise (the most lags) */
+    {
+        pd_osc o = { .inc = pd_pitch_inc(40 << 8), .wave = PD_WAVE_SAW };
+        static int16_t buf[PD_TUNER_N], keep[PD_TUNER_N];
+        pd_pitch p;
+        for (unsigned i = 0; i < PD_TUNER_N; i += PD_BLOCK) {
+            pd_osc_render(&o, blk, PD_BLOCK);
+            for (unsigned j = 0; j < PD_BLOCK; j++)
+                keep[i + j] = (int16_t)(blk[j] >> 2);
+        }
+        uint32_t t0 = now_ns();
+        for (int r = 0; r < 20; r++) {
+            memcpy(buf, keep, sizeof buf);
+            pd_tuner_detect(buf, &p);
+        }
+        printf("  a look at E2: %.0f us on the host\n", (now_ns() - t0) / 20.0 / 1000.0);
+    }
+    free(s);
+}
+
+/* -------------------------------------------------------------- metronome --- */
+
+static void test_metro(void)
+{
+    static const uint32_t tempi[] = { 400, 1200, 1337, 2400 };
+    pd_sample one, blk[PD_BLOCK];
+    for (unsigned t = 0; t < 4; t++) {
+        pd_metro m;
+        pd_metro_init(&m);
+        pd_metro_tempo(&m, tempi[t]);
+        pd_metro_restart(&m);
+        double spb = 600.0 * PD_FS / tempi[t], worst = 0;
+        uint32_t last = 0, beats = 0;
+        for (uint32_t i = 0; beats < 64; i++) {
+            pd_metro_process(&m, &one, 1);
+            if (m.ticks != last) {
+                double e = fabs(i - beats * spb);
+                if (e > worst)
+                    worst = e;
+                CHECK(m.beat == beats % 4, "tempo %u: beat %u is %d in the bar", tempi[t], beats, m.beat);
+                last = m.ticks;
+                beats++;
+            }
+        }
+        CHECK(worst <= 1.0, "tempo %u.%u: a beat %.2f samples off", tempi[t] / 10, tempi[t] % 10, worst);
+        printf("  %u.%u BPM: 64 beats, at most %.2f samples off\n", tempi[t] / 10, tempi[t] % 10, worst);
+    }
+
+    /* blocks: the same beats as sample by sample */
+    {
+        pd_metro a, b;
+        pd_metro_init(&a);
+        pd_metro_init(&b);
+        pd_metro_tempo(&a, 1777);
+        pd_metro_tempo(&b, 1777);
+        a.on = b.on = 1;
+        pd_metro_restart(&a);
+        pd_metro_restart(&b);
+        int same = 1;
+        for (unsigned i = 0; i < SECONDS(4); i += PD_BLOCK) {
+            pd_metro_process(&a, blk, PD_BLOCK);
+            for (unsigned j = 0; j < PD_BLOCK; j++) {
+                pd_metro_process(&b, &one, 1);
+                same &= one == blk[j];
+            }
+        }
+        CHECK(same && a.ticks == b.ticks && a.ticks > 10, "blocks and samples differ (%u, %u beats)", a.ticks, b.ticks);
+    }
+
+    /* the click: on the beat, the first beat higher and louder (ACCENT), its level, silent when off */
+    {
+        pd_metro m;
+        pd_metro_init(&m);
+        pd_metro_tempo(&m, 1200);
+        pd_metro_beats(&m, 3);
+        m.on = 1;
+        pd_metro_restart(&m);
+        unsigned spb = 600u * PD_FS / 1200u, n = spb * 6u;
+        pd_sample *o = calloc(n + PD_BLOCK, sizeof *o);
+        for (unsigned i = 0; i < n; i += PD_BLOCK)
+            pd_metro_process(&m, o + i, PD_BLOCK);
+        int32_t pk[6] = { 0 };
+        unsigned zc[6] = { 0 };
+        for (unsigned b = 0; b < 6; b++) {
+            for (unsigned i = b * spb; i < b * spb + PD_METRO_CLICK && i < n; i++) {
+                int32_t a = o[i] < 0 ? -o[i] : o[i];
+                if (a > pk[b])
+                    pk[b] = a;
+                zc[b] += i > b * spb && o[i - 1] < 0 && o[i] >= 0;
+            }
+            CHECK(o[b * spb + spb / 2] == 0, "beat %u: sound between the clicks", b);
+        }
+        CHECK(pk[0] > pk[1] && pk[3] > pk[4] && pk[1] > 1000 && zc[0] > zc[1] * 3 / 2,
+              "ACCENT: peaks %d %d, crossings %u %u", pk[0], pk[1], zc[0], zc[1]);
+        printf("  ACCENT on 3: the first beat %d at %u crossings, the others %d at %u\n", pk[0], zc[0], pk[1], zc[1]);
+        if (wav_dir) {
+            int16_t *w = mono_buf(n);
+            for (unsigned i = 0; i < n; i++)
+                w[i] = (int16_t)pd_sat16(o[i]);
+            save("metronome_3.wav", w, n, 1);
+            free(w);
+        }
+        int32_t full = pk[1];
+        m.level = 8192;
+        pd_metro_restart(&m);
+        memset(o, 0, n * sizeof *o);
+        for (unsigned i = 0; i < spb * 2u; i += PD_BLOCK)
+            pd_metro_process(&m, o + i, PD_BLOCK);
+        int32_t q = 0;
+        for (unsigned i = spb; i < spb + PD_METRO_CLICK; i++)
+            q = o[i] > q ? o[i] : q;
+        CHECK(q > full / 3 && q < full * 2 / 3, "LEVEL 25%%: %d against %d at 50%%", q, full);
+        m.on = 0;
+        uint32_t tk = m.ticks;
+        int quiet = 1;
+        for (unsigned i = 0; i < spb * 3u; i += PD_BLOCK) {
+            pd_metro_process(&m, blk, PD_BLOCK);
+            for (unsigned j = 0; j < PD_BLOCK; j++)
+                quiet &= blk[j] == 0;
+        }
+        CHECK(quiet && m.ticks >= tk + 2, "off: %s, %u beats", quiet ? "silent" : "a click", m.ticks - tk);
+        free(o);
+    }
+
+    /* following a loop: 7 beats of 10000 samples, 4 to the bar: the beat is the loop's, the bar starts again with it */
+    {
+        pd_metro m;
+        pd_metro_init(&m);
+        m.on = 1;
+        uint32_t len = 70000, spb = 10000, pos = 0, ones = 0, bad = 0, accented = 0;
+        uint8_t prev = 0;
+        for (unsigned i = 0; i < len * 2u; i += PD_BLOCK) {
+            pd_metro_follow(&m, pos, spb);
+            uint32_t was = m.ticks;
+            uint8_t b0 = m.beat;
+            pd_metro_process(&m, blk, PD_BLOCK);
+            if (m.beat == 0 && prev != 0) {
+                ones++;
+                accented += m.inc == pd_pitch_inc(96 << 8) && m.age < 2u * PD_BLOCK;
+            }
+            if (m.ticks == was && m.beat != b0)
+                bad++;
+            prev = m.beat;
+            pos = (pos + PD_BLOCK) % len;
+        }
+        uint32_t want = pos / spb % 4u;
+        pd_metro_follow(&m, pos, spb);
+        CHECK(m.beat == want && ones == 3 && accented == 3 && !bad,
+              "following: beat %d (want %u), %u first beats (%u accented), %u odd", m.beat, want, ones, accented, bad);
+    }
+}
+
 int main(int argc, char **argv)
 {
     wav_dir = argc > 1 ? argv[1] : NULL;
@@ -699,13 +1120,16 @@ int main(int argc, char **argv)
         const char *name;
         void (*fn)(void);
     } tests[] = {
-        { "oscillator", test_osc }, { "envelope", test_env }, { "filter", test_filter },
+        { "oscillator", test_osc }, { "envelope", test_env }, { "filter", test_filter }, { "filter modes", test_filter_modes },
         { "delay", test_delay },    { "rack", test_rack },    { "input", test_input },
         { "looper", test_looper },
         { "synth sweep", test_synth_sweep },
         { "engine", test_engine },
         { "effects", test_effects },
         { "amp", test_amp },
+        { "levels", test_levels },
+        { "tuner", test_tuner },
+        { "metronome", test_metro },
     };
     printf("Pendel DSP tests at %u Hz, %d-frame blocks\n", PD_FS, PD_BLOCK);
     for (size_t i = 0; i < sizeof tests / sizeof tests[0]; i++) {

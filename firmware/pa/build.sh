@@ -33,7 +33,7 @@ $CC -c "$BSP/chip/fm1_vec.S" -o "$O/vec.o"
 $CC -c "$BSP/chip/fm1_isr.S" -o "$O/isr.o"
 OBJS="$O/crt0.o $O/vec.o $O/isr.o"
 for f in firmware/pa/main.c src/app/app.c src/ui/ui.c src/dsp/pd_core.c src/dsp/pd_osc.c src/dsp/pd_modules.c src/dsp/pd_effects.c \
-         src/dsp/pd_rack.c src/dsp/pd_looper.c; do
+         src/dsp/pd_rack.c src/dsp/pd_looper.c src/dsp/pd_tuner.c src/dsp/pd_metro.c; do
     o="$O/$(basename "$f" .c).o"
     case "$f" in
         firmware/*) OPT=${PENDEL_FW_OPT:--Os} ;;    # the glue and the BSP it includes, as Felucca builds them

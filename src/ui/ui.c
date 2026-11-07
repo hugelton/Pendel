@@ -293,7 +293,7 @@ static const uint8_t LOOP_IC[] = { IC_EMPTY, IC_REC, IC_PLAY, IC_DUB, IC_STOP };
 static void header(const ui_model_t *m, uint32_t ic, const char *title)
 {
     char b[8];
-    int32_t i, gw, x;
+    int32_t i, gw, x, nb = m->beats ? m->beats : 4, dp = nb <= 4 ? 8 : nb <= 6 ? 6 : 5;   /* the beat dots' pitch */
     if (!m->head_slot && title) {                            /* MENU, as Felucca's (ui_menu.c menu_head): the icon in
                                                               * THEME, the title in M at 30; no tape group */
         icon_in(8, 0, 16, HEAD_H, ic ? ic - 1u : IC_MENU, 16, T_THEME, T_BG);
@@ -301,6 +301,8 @@ static void header(const ui_model_t *m, uint32_t ic, const char *title)
         if (m->loop_state == UI_LOOP_REC || m->loop_state == UI_LOOP_DUB)
             icon_in(30 + text_w(&AF_M, title) + 6, 0, 12, HEAD_H, m->loop_state == UI_LOOP_REC ? IC_REC : IC_DUB, 12,
                     T_REC, T_BG);
+        if (m->hold_to)
+            goto hold;
         goto right;
     }
     if (m->head_slot) {
@@ -312,18 +314,29 @@ static void header(const ui_model_t *m, uint32_t ic, const char *title)
     }
     if (m->loop_state == UI_LOOP_REC || m->loop_state == UI_LOOP_DUB)
         icon_in(23, 0, 12, HEAD_H, m->loop_state == UI_LOOP_REC ? IC_REC : IC_DUB, 12, T_REC, T_BG);
+    if (m->hold_to) {                                        /* a hold under way: where it leads, a count, a bar */
+    hold:;
+        char t[2] = { (char)('0' + m->hold_left % 10u), 0 };
+        gw = text_w(&AF_M, m->hold_to) + 8 + text_w(&AF_M, t);
+        x = 120 - gw / 2;
+        x = cv_text(x, CAP_IN(M, HEAD_H), &AF_M, m->hold_to, T_THEME) + 8;
+        cv_text(x, CAP_IN(M, HEAD_H), &AF_M, t, T_TEXT);
+        cv_rect(120 - gw / 2, HEAD_H - 3, gw, 2, T_RAISE);
+        cv_rect(120 - gw / 2, HEAD_H - 3, gw * m->hold_frac / 255, 2, T_THEME);
+        goto right;
+    }
     put_u(b, (m->bpm10 + 5u) / 10u);
-    gw = 16 + 6 + 4 * 8 - 2 + 4 + text_w(&AF_M, b);         /* state, metronome (4 dots), BPM */
+    gw = 16 + 6 + nb * dp - 2 + 4 + text_w(&AF_M, b);       /* state, metronome (a dot a beat), BPM */
     x = 120 - gw / 2;
     icon_in(x, 0, 16, HEAD_H, LOOP_IC[m->loop_state], 16,
             m->loop_state == UI_LOOP_EMPTY ? T_DIM : loop_colour(m->loop_state), T_BG);
     x += 16 + 6;
-    for (i = 0; i < 4; i++) {                                /* the beat */
-        int32_t on = i == m->beat;
-        uint16_t c = on ? ux_mix(T_ACCENT, T_DIM, m->beat_frac * 100 / 255) : T_RAISE;
-        cv_rrect(x + i * 8, HEAD_H / 2 - 3, 6, 6, -3, i == 0 && !on ? T_DIM : c, T_BG);
+    for (i = 0; i < nb; i++) {                               /* the beat (the click on: the lit dot stays bright longer) */
+        int32_t on = i == m->beat, d = dp - 2;
+        uint16_t c = on ? ux_mix(T_ACCENT, T_DIM, m->beat_frac * (m->metro_on ? 60 : 100) / 255) : T_RAISE;
+        cv_rrect(x + i * dp, HEAD_H / 2 - d / 2, d, d, -(d / 2), i == 0 && !on ? T_DIM : c, T_BG);
     }
-    x += 4 * 8 - 2 + 4;
+    x += nb * dp - 2 + 4;
     cv_text(x, CAP_IN(M, HEAD_H), &AF_M, b, T_TEXT);
 right:
     {
@@ -377,10 +390,10 @@ static void filter_curve(int32_t x, int32_t y, int32_t w, int32_t h, int32_t cut
         int32_t bump = ad < 4 ? peak * (4 - ad) / 4 : 0;
         if (mode == 1)                                        /* band: falls both ways */
             v = base + ad * 3 - bump;
-        else if ((mode == 0 && d <= 0) || (mode == 2 && d >= 0))
+        else if ((mode != 2 && d <= 0) || (mode == 2 && d >= 0))
             v = base - bump;                                  /* the pass band */
         else
-            v = base + ad * 4 - bump;                         /* the stop band, 12 dB / oct */
+            v = base + ad * (mode == 3 ? 8 : 4) - bump;       /* the stop band, 12 dB / oct (the ladder 24) */
         pts[i] = clampi(v, 0, h - 2);
     }
     plot(x, y, w, pts, 48, c);
@@ -558,6 +571,22 @@ static void home(const ui_model_t *m)
  * x 16 and its value right-aligned at 224 in M; the selected row filled THEME (radius 6), its text in INK; 1 px rules
  * between the others, inset 6, none next to the selection. A slot's picture sits in the cards' band above. */
 
+/* the metronome's bar: a cell a beat, numbered, the one now lit and fading through it (the click off: in THEME, quieter);
+ * the first taller when ACCENT is on */
+static void metro_bar(int32_t x, int32_t y, int32_t w, int32_t h, const int32_t *g)
+{
+    int32_t n = clampi(g[0], 1, 8), gap = 6, cw = (w - (n - 1) * gap) / n, i;
+    x += (w - (n * cw + (n - 1) * gap)) / 2;
+    for (i = 0; i < n; i++) {
+        int32_t cx = x + i * (cw + gap), tall = i == 0 && g[4], cy = tall ? y : y + 4, ch = tall ? h : h - 8;
+        int lit = i == g[1];
+        uint16_t c = lit ? ux_mix(g[3] ? T_ACCENT : T_THEME, T_RAISE, g[2] * (g[3] ? 70 : 85) / 255) : T_RAISE;
+        char d[2] = { (char)('1' + i), 0 };
+        cv_rrect(cx, cy, cw, ch, 4, c, T_SURF);
+        cv_text_in(cx, cy + CAP_IN(S, ch), cw, &AF_S, d, lit ? T_INK : T_DIM, c);
+    }
+}
+
 static void graph(const ui_model_t *m, int32_t x, int32_t y, int32_t w, int32_t h)
 {
     const int32_t *g = m->g;
@@ -595,6 +624,9 @@ static void graph(const ui_model_t *m, int32_t x, int32_t y, int32_t w, int32_t 
     case UI_G_GAIN:
         bar(x, y + h / 2 - 4, w, 8, (uint32_t)g[0] / 4u, T_THEME, T_SURF);
         cv_rect(x + w / 4, y + h / 2 - 6, 1, 12, T_ACCENT);   /* 1x */
+        break;
+    case UI_G_METRO:
+        metro_bar(x, y, w, h, g);
         break;
     default:
         break;
@@ -671,6 +703,67 @@ static void list_page(const ui_model_t *m)
     footer(m, m->title_icon, m->title, pos);
 }
 
+/* -------------------------------------------------------------- tuner --- */
+/* The tuner, one panel: the note in L (the octave after it in M), green when within 3 cents; under it the cents as a
+ * marker on a -50 .. +50 scale, the cents in words and the frequency. The sound goes on through it. */
+#define TU_X0 19
+#define TU_W 202                   /* the scale: 2 px a cent */
+#define TU_Y 112
+
+static void tuner_page(const ui_model_t *m)
+{
+    static const char *const NN[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+    int32_t c = m->tuner_cents10, ok = m->tuner_ok, intune = ok && c > -30 && c < 30, i, x;
+    uint16_t nc = !ok ? T_DIM : intune ? T_OK : T_TEXT, mc = intune ? T_OK : T_THEME;
+    char oct[4], line[16], *d;
+    header(m, m->title_icon, m->title);
+    cv_panel(PANEL_X, CARD_Y, PANEL_W, PANEL_Y + PANEL_H - CARD_Y, 4, T_BG);
+    LINT_CELL(PANEL_X, CARD_Y, PANEL_X + PANEL_W, PANEL_Y + PANEL_H);
+    {                                                         /* the note */
+        const char *nm = ok ? NN[m->tuner_note % 12u] : "-";
+        int32_t ly = 46, cap_bot = ly + AF_L_CAP_Y + AF_L_CAP_H, wl = text_w(&AF_L, nm), wo = 0;
+        if (ok) {
+            put_u(oct, m->tuner_note / 12u > 0 ? m->tuner_note / 12u - 1u : 0u);
+            wo = 3 + text_w(&AF_M, oct);
+        }
+        x = 120 - (wl + wo) / 2;
+        x = cv_text_on(x, ly, &AF_L, nm, nc, T_SURF);
+        if (ok)
+            cv_text_on(x + 3, cap_bot - AF_M_CAP_Y - AF_M_CAP_H, &AF_M, oct, nc, T_SURF);
+    }
+    for (i = -2; i <= 2; i++) {                               /* the scale: -50 -25 0 +25 +50 */
+        int32_t tx = TU_X0 + TU_W / 2 + i * 50, th = i ? 8 : 16;
+        cv_rect(tx, TU_Y + 10 - th / 2, i ? 1 : 2, th, i ? T_LINE : T_ACCENT);
+    }
+    cv_rect(TU_X0, TU_Y + 10, TU_W, 1, T_LINE);
+    cv_text_on(TU_X0 - 4, TU_Y + 20, &AF_S, "-50", T_DIM, T_SURF);
+    cv_text_r(TU_X0 + TU_W + 4, TU_Y + 20, &AF_S, "+50", T_DIM, T_SURF);
+    if (ok) {                                                 /* the marker: 2 px a cent */
+        int32_t mx = TU_X0 + TU_W / 2 + clampi(c, -500, 500) / 5;
+        cv_rrect(mx - 4, TU_Y, 9, 21, 3, mc, T_SURF);
+    }
+    if (ok) {                                                 /* "+3.2 CENTS", "82.4 HZ" */
+        int32_t a = c < 0 ? -c : c;
+        d = line;
+        *d++ = c < 0 ? '-' : c > 0 ? '+' : ' ';
+        if (d[-1] == ' ')
+            d--;
+        d = put_u(d, (uint32_t)a / 10u);
+        *d++ = '.';
+        *d++ = (char)('0' + a % 10);
+        put_s(d, " CENTS");
+        cv_text_in(PANEL_X, 146, PANEL_W, &AF_M, line, intune ? T_OK : T_TEXT, T_SURF);
+        d = put_u(line, m->tuner_hz10 / 10u);
+        *d++ = '.';
+        *d++ = (char)('0' + m->tuner_hz10 % 10u);
+        put_s(d, " HZ");
+        cv_text_in(PANEL_X, 172, PANEL_W, &AF_S, line, T_DIM, T_SURF);
+    } else {
+        cv_text_in(PANEL_X, 146, PANEL_W, &AF_M, "PLAY A STRING", T_DIM, T_SURF);
+    }
+    footer(m, m->title_icon, m->title, "MUTED");
+}
+
 /* ------------------------------------------------------------- driver --- */
 
 void ui_init(uint32_t palette) { palette_set(palette % NPALETTES); }
@@ -727,6 +820,8 @@ static void draw_screen(const ui_model_t *m)
 {
     if (m->page == UI_PAGE_LIST)
         list_page(m);
+    else if (m->page == UI_PAGE_TUNER)
+        tuner_page(m);
     else
         home(m);
 }

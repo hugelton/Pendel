@@ -144,20 +144,32 @@ static const char *const DRV_NAMES[PD_DRV_PARAMS] = { "Drive", "Tone", "Level" }
 typedef struct {
     int32_t pre;               /* Q8: 1x .. 32x */
     int32_t tone;              /* one-pole coefficient, Q15 */
-    int32_t level, gain;       /* Q15 */
+    int32_t vol, level, gain;  /* Q15: LEVEL as set; with the make-up; as ramped */
     int32_t lp;
 } drive_t;
+
+/* the drive's make-up: 0.72 / sqrt(pre), so turning DRIVE up thickens the sound more than it raises it
+ * (about level with the dry at -8 dBFS peaks and the defaults) */
+static void drv_level(drive_t *d)
+{
+    int32_t root = (int32_t)pd_isqrt((uint32_t)d->pre << 8);          /* Q8, 16 .. 362 */
+    int32_t mk = (23593 * 256) / (root < 16 ? 16 : root);              /* Q15, 0.72 / sqrt(pre) */
+    d->level = (d->vol * mk) >> 15;
+}
 
 static void drv_set(void *st, unsigned id, int32_t v)
 {
     drive_t *d = st;
     v = pd_clamp(v, 0, PD_PARAM_MAX);
-    if (id == PD_DRV_DRIVE)
+    if (id == PD_DRV_DRIVE) {
         d->pre = 256 + ((v * 31) >> 7);
-    else if (id == PD_DRV_TONE)
+        drv_level(d);
+    } else if (id == PD_DRV_TONE)
         d->tone = 1500 + ((v * 31267) >> 15);
-    else if (id == PD_DRV_LEVEL)
-        d->level = v;
+    else if (id == PD_DRV_LEVEL) {
+        d->vol = v;
+        drv_level(d);
+    }
 }
 
 static void drv_reset(void *st)
@@ -202,8 +214,21 @@ static const char *const FLT_NAMES[PD_FLT_PARAMS] = { "Cutoff", "Resonance", "Mo
 
 typedef struct {
     pd_svf svf;
+    pd_ladder ladder;
+    pd_sk sk;
     int32_t cutoff, res;
+    uint8_t mode;
 } filter_t;
+
+static void flt_reset(void *st)
+{
+    filter_t *f = st;
+    f->svf.low = f->svf.band = 0;
+    for (int i = 0; i < 4; i++)
+        f->ladder.s[i] = 0;
+    for (int i = 0; i < 3; i++)
+        f->sk.s[i] = 0;
+}
 
 static void flt_set(void *st, unsigned id, int32_t v)
 {
@@ -213,12 +238,19 @@ static void flt_set(void *st, unsigned id, int32_t v)
         f->cutoff = v;
     else if (id == PD_FLT_RESONANCE)
         f->res = v;
-    else if (id == PD_FLT_MODE)
-        f->svf.mode = (uint8_t)((v * PD_SVF_MODES) >> 15);
-    pd_svf_set(&f->svf, f->cutoff, f->res);
+    else if (id == PD_FLT_MODE && f->mode != (uint8_t)((v * PD_FLT_MODES) >> 15)) {
+        f->mode = (uint8_t)((v * PD_FLT_MODES) >> 15);
+        flt_reset(f);                                     /* the new filter starts from silence */
+    }
+    if (f->mode == PD_FLT_LADDER)
+        pd_ladder_set(&f->ladder, f->cutoff, f->res);
+    else if (f->mode == PD_FLT_SK)
+        pd_sk_set(&f->sk, f->cutoff, f->res);
+    else {
+        f->svf.mode = f->mode;
+        pd_svf_set(&f->svf, f->cutoff, f->res);
+    }
 }
-
-static void flt_reset(void *st) { ((filter_t *)st)->svf.low = ((filter_t *)st)->svf.band = 0; }
 
 static void flt_init(void *st, void *mem, uint32_t sr)
 {
@@ -231,7 +263,17 @@ static void flt_init(void *st, void *mem, uint32_t sr)
 
 static void flt_process(void *st, const pd_sample *in, pd_sample *out, unsigned frames)
 {
-    pd_svf_process(&((filter_t *)st)->svf, in, out, frames);
+    filter_t *f = st;
+    if (f->mode == PD_FLT_LADDER)
+        pd_ladder_process(&f->ladder, in, out, frames);
+    else if (f->mode == PD_FLT_SK)
+        pd_sk_process(&f->sk, in, out, frames);
+    else {
+        pd_svf_process(&f->svf, in, out, frames);
+        if (f->mode != PD_FLT_LP)                          /* BP, HP: +9.5 dB, for the lows they take out */
+            for (unsigned i = 0; i < frames; i++)
+                out[i] = pd_clamp(out[i], -21845, 21845) * 3;
+    }
 }
 
 const PendelDSP PD_FX_FILTER = {

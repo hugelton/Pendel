@@ -22,6 +22,7 @@ enum { PD_DRV_DRIVE, PD_DRV_TONE, PD_DRV_LEVEL, PD_DRV_PARAMS };
 extern const PendelDSP PD_FX_DRIVE;
 
 enum { PD_FLT_CUTOFF, PD_FLT_RESONANCE, PD_FLT_MODE, PD_FLT_PARAMS };
+enum { PD_FLT_LP, PD_FLT_BP, PD_FLT_HP, PD_FLT_LADDER, PD_FLT_SK, PD_FLT_MODES };   /* the first three: the SVF's */
 extern const PendelDSP PD_FX_FILTER;
 
 /* input conditioning, the source's buffer stage: gain (0 .. 8x, 4096 = 1x), a noise gate (0 = off),

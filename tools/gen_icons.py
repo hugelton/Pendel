@@ -48,6 +48,8 @@ ICONS = [
     # the header battery (Felucca: battery_2 unused; battery_0 is drawn at the wrong scale in Fukiai 0.8: not used here)
     ("BAT1", "system_battery_1"), ("BAT3", "system_battery_3"), ("BAT4", "system_battery_4"),
     ("BATCHG", "system_battery_charging"),
+    # the metronome and its beats
+    ("METRO", "symbol_tempo"), ("BEAT", "note_quarter"),
 ]
 
 

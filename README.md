@@ -18,6 +18,8 @@ IN → EFX1 → EFX2 → EFX3 → AMP → TAPE
 - **EFX1–3**: drive, fuzz, filter, auto-wah, crush, phaser, flanger, tremolo, wobble, pitch, delay, room, noise, gain
 - **AMP**: clean, crunch or lead, with bass, middle, treble and a cabinet
 - **TAPE**: a 9-second looper on VOL+ (record, overdub) and VOL- (stop, hold to clear); it also sets the tempo
+- **METRONOME** (MENU): a click at the tempo, 1–8 beats to the bar, an accent on the first, its own level
+- **TUNER** (push on HOME's IN, or MENU): the note, the octave and the cents, E1 to E6 and beyond; the sound goes on through it
 
 A sibling of [Felucca](https://github.com/hugelton/Felucca) (the M-VAVE FM-1 firmware), on the same chip and the same
 look. Hardware layer: [pendel-bsp](https://github.com/hugelton/pendel-bsp) (MPL-2.0).

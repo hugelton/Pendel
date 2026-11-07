@@ -283,7 +283,7 @@ static void session(void)
     run(20);
     EXPECT(!strcmp(app_model()->card_label[CARD_AMP], "LEAD"), "AMP card %s", app_model()->card_label[CARD_AMP]);
 
-    /* the scope: the input's gain on the knob, the push opens MENU at INPUT GAIN */
+    /* the scope: the input's gain on the knob, the push opens the TUNER, the push again HOME */
     for (int i = 0; i < 5; i++)
         tap(APP_K_DN);
     char was[12];
@@ -296,11 +296,16 @@ static void session(void)
     EXPECT(strcmp(app_model()->in_value, was) != 0, "IN gain did not move (%s)", app_model()->in_value);
     shot("06c_home_input");
     tap(APP_K_SEL);
+    pluck(252, 3);                                 /* (an E3-ish string: 175 Hz, F3) */
+    run(800);
+    EXPECT(app_model()->page == UI_PAGE_TUNER && app_model()->tuner_ok && app_model()->tuner_note == 53
+           && app_model()->out_level > 64, "the push on IN: page %d, note %d, out %u", app_model()->page,
+           app_model()->tuner_note, app_model()->out_level);
+    shot("06d_tuner_from_in");
+    tap(APP_K_SEL);
     run(20);
-    EXPECT(app_model()->page == UI_PAGE_LIST && app_model()->focus == 0 && !strcmp(app_model()->title, "MENU"),
-           "the push did not open MENU at INPUT GAIN");
-    tap(APP_K_HOME);
-    run(20);
+    EXPECT(app_model()->page == UI_PAGE_HOME && app_model()->focus == 5, "the TUNER did not close to HOME's IN");
+    pluck_on = 0;
 
     /* TAPE, on HOME's band: the push records a take (four plucks, about 1.6 s), closes it, overdubs */
     focus_card(CARD_TAPE);
@@ -378,15 +383,30 @@ static void session(void)
     tap(APP_K_LOOP);
     run(100);
     EXPECT(app_model()->loop_state == UI_LOOP_PLAY, "VOL+ did not close the take (%d)", app_model()->loop_state);
-    press(APP_K_STOP, 2200);
+    keys |= APP_K_STOP;                            /* held: the header says where it leads and when */
+    run(1000);
+    EXPECT(app_model()->hold_to && !strcmp(app_model()->hold_to, "CLEAR")
+           && app_model()->hold_left == 3,                /* 1 s of 2: 5 4 [3] 2 1 */
+           "VOL- held: no CLEAR countdown (%s %d)", app_model()->hold_to ? app_model()->hold_to : "-",
+           app_model()->hold_left);
+    shot("11_hold_clear");
+    run(1200);
+    keys &= (uint8_t)~APP_K_STOP;
+    run(20);
     EXPECT(app_model()->loop_state == UI_LOOP_EMPTY, "not cleared (%d)", app_model()->loop_state);
+    EXPECT(!app_model()->hold_to, "the countdown stayed (%s)", app_model()->hold_to);
     tap(APP_K_HOME);
     run(100);
     shot("11_home_cleared");
 
-    press(APP_K_HOME, 800);                        /* HOME held: MENU */
-    run(100);
-    EXPECT(app_model()->page == UI_PAGE_LIST && app_model()->nrows == 9, "MENU not open (page %d rows %d)",
+    keys |= APP_K_HOME;                            /* HOME held: MENU */
+    run(300);
+    EXPECT(app_model()->hold_to && !strcmp(app_model()->hold_to, "MENU"), "HOME held: no MENU countdown");
+    shot("11_hold_menu");
+    run(500);
+    keys &= (uint8_t)~APP_K_HOME;
+    run(120);
+    EXPECT(app_model()->page == UI_PAGE_LIST && app_model()->nrows == 11, "MENU not open (page %d rows %d)",
            app_model()->page, app_model()->nrows);
     tap(APP_K_DN);                                 /* GATE */
     for (int i = 0; i < 12; i++)
@@ -402,6 +422,70 @@ static void session(void)
     run(100);
     EXPECT(app_model()->bpm10 == b0 + 30u && b0 % 10u == 0, "TEMPO: %u then %u", b0, app_model()->bpm10);
     shot("13_menu_tempo");
+
+    /* METRONOME (MENU, the row after TEMPO): the push opens it; the click on, 3 beats; the header's dots follow and
+     * the click is in the output (no input) */
+    pluck_on = 0;
+    tap(APP_K_DN);
+    tap(APP_K_SEL);
+    run(40);
+    EXPECT(app_model()->page == UI_PAGE_LIST && !strcmp(app_model()->title, "METRONOME")
+           && app_model()->graph == UI_G_METRO, "METRONOME did not open");
+    tap(APP_K_R);                                  /* CLICK: ON */
+    tap(APP_K_DN), tap(APP_K_DN);                  /* BEATS */
+    tap(APP_K_L);                                  /* 3 */
+    run(400);
+    {
+        unsigned peak = 0;
+        for (int i = 0; i < 30; i++) {
+            run(30);
+            if (app_model()->out_level > peak)
+                peak = app_model()->out_level;
+        }
+        EXPECT(app_model()->beats == 3 && app_model()->metro_on && peak > 1000, "metronome: %u beats, on %u, out %u",
+               app_model()->beats, app_model()->metro_on, peak);
+        printf("  the metronome: 3 beats, the click's peak %u\n", peak);
+    }
+    shot("14_metronome");
+    tap(APP_K_HOME);
+    run(300);
+    shot("15_home_metronome");
+    press(APP_K_HOME, 800);                        /* MENU again, at METRONOME: L switches the click off */
+    run(40);
+    EXPECT(app_model()->focus == 7 && app_model()->rows[7].kind == UI_ROW_SWITCH, "MENU not at METRONOME (%d)",
+           app_model()->focus);
+    tap(APP_K_L);
+    run(40);
+    EXPECT(!app_model()->metro_on, "the click did not switch off");
+
+    /* TUNER (the next row): the push opens it, the sound going on; a plucked A3 (a 200-sample string: 220 Hz) */
+    tap(APP_K_DN);
+    tap(APP_K_SEL);
+    run(40);
+    EXPECT(app_model()->page == UI_PAGE_TUNER, "TUNER did not open (page %d)", app_model()->page);
+    run(300);
+    shot("16_tuner_waiting");
+    pluck(200, 5);
+    run(800);
+    EXPECT(app_model()->tuner_ok && app_model()->tuner_note == 57 && app_model()->tuner_cents10 > -100
+           && app_model()->tuner_cents10 < 100, "tuner: ok %d, note %d, %d/10 cents", app_model()->tuner_ok,
+           app_model()->tuner_note, app_model()->tuner_cents10);
+    EXPECT(app_model()->out_level > 64, "tuner: the sound not going on (%u)", app_model()->out_level);
+    printf("  the tuner: note %d %+d.%d cents, %u.%u Hz\n", app_model()->tuner_note, app_model()->tuner_cents10 / 10,
+           (app_model()->tuner_cents10 < 0 ? -app_model()->tuner_cents10 : app_model()->tuner_cents10) % 10,
+           app_model()->tuner_hz10 / 10, app_model()->tuner_hz10 % 10);
+    shot("17_tuner_a3");
+    pluck(300, 9);                                 /* a flat D3 (147 Hz): 300 samples */
+    run(800);
+    EXPECT(app_model()->tuner_ok && app_model()->tuner_note == 50, "tuner: note %d", app_model()->tuner_note);
+    shot("18_tuner_d3");
+    tap(APP_K_SEL);                                /* the push closes it: MENU, the sound back */
+    run(100);
+    EXPECT(app_model()->page == UI_PAGE_LIST && app_model()->focus == 8, "TUNER did not close to MENU");
+    pluck(200, 5);
+    run(300);
+    EXPECT(app_model()->out_level > 500, "the output still muted (%u)", app_model()->out_level);
+    pluck_on = 0;
     tap(APP_K_HOME);                               /* a tap closes it */
     run(100);
     EXPECT(app_model()->page == UI_PAGE_HOME, "MENU not closed");

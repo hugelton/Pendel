@@ -28,12 +28,16 @@ sine = [round(32767 * math.sin(2 * math.pi * i / 1024)) for i in range(1025)]
 # phase increment a sample for MIDI notes 0..127 (2^32 = one cycle)
 note_inc = [min(round(440 * 2 ** ((n - 69) / 12) / fs * 2 ** 32), 2 ** 31 - 1) for n in range(128)]
 
-# Chamberlin SVF frequency coefficient 2 sin(pi fc / fs), Q15, for cutoff index 0..256:
+# the amp's tone stack (a Chamberlin SVF): its frequency coefficient 2 sin(pi fc / fs), Q15, for cutoff index 0..256:
 # fc = 20 Hz * 2^(10 k / 256) (20 Hz .. 20.5 kHz), held below fs / 6 where the filter stays stable
 svf_f = []
 for k in range(257):
     fc = min(20 * 2 ** (10 * k / 256), fs / 6)
     svf_f.append(min(round(32768 * 2 * math.sin(math.pi * fc / fs)), 32767))
+
+# the trapezoidal SVF's (pd_svf) frequency coefficient tan(pi fc / fs), Q24, for the same index; fc = 20 Hz .. 20.5 kHz,
+# held below 0.45 fs (that filter is stable at any cutoff)
+svf_g = [round(2 ** 24 * math.tan(math.pi * min(20 * 2 ** (10 * k / 256), 0.45 * fs) / fs)) for k in range(257)]
 
 # segment times in samples for a parameter index 0..256: 1 ms .. 10 s, exponential
 times = [max(1, round(fs * 0.001 * 10000 ** (k / 256))) for k in range(257)]
@@ -98,6 +102,10 @@ static const uint32_t PD_NOTE_INC[128] = {{
 
 static const int16_t PD_SVF_F[257] = {{
 {rows(svf_f)}
+}};
+
+static const uint32_t PD_SVF_G[257] = {{
+{rows(svf_g, 10)}
 }};
 
 static const uint32_t PD_TIME[257] = {{

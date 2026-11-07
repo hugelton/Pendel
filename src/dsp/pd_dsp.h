@@ -79,4 +79,20 @@ static inline uint32_t pd_lut32(const uint32_t *t, int32_t p)
     return a + (((b - a) * (uint32_t)(p & 127)) >> 7);   /* steps below 2^25 (PD_TIME's are ~16k) */
 }
 
+/* floor(sqrt(x)), bit by bit (no division) */
+static inline uint32_t pd_isqrt(uint32_t x)
+{
+    uint32_t r = 0, b = 1u << 30;
+    while (b > x)
+        b >>= 2;
+    for (; b; b >>= 2) {
+        if (x >= r + b) {
+            x -= r + b;
+            r = (r >> 1) + b;
+        } else
+            r >>= 1;
+    }
+    return r;
+}
+
 #endif
