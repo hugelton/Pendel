@@ -8,9 +8,6 @@
 
 Pendel is open-source firmware for the M-VAVE Pocket AMP: an effects unit with a tape loop.
 
-**Beta.** This is a beta version: the first full release may change a great deal (the effects, the controls and the
-screen).
-
 ```
 IN → EFX1 → EFX2 → EFX3 → AMP → TAPE
 ```
@@ -24,7 +21,7 @@ IN → EFX1 → EFX2 → EFX3 → AMP → TAPE
 A sibling of [Felucca](https://github.com/hugelton/Felucca) (the M-VAVE FM-1 firmware), on the same chip and the same
 look. Hardware layer: [pendel-bsp](https://github.com/hugelton/pendel-bsp) (MPL-2.0).
 
-The Pocket AMP firmware is at version 1.1.0 beta. Connect the Pocket AMP to a computer by USB, open the [web
+The Pocket AMP firmware is at version 1.1.0. Connect the Pocket AMP to a computer by USB, open the [web
 installer](https://hugelton.github.io/Pendel/) in Chrome or Edge and press Install; no extra hardware is needed.
 Installing is at your own risk: the installer's **Return to the official firmware**, with the official file from
 M-VAVE, takes you back.
@@ -37,7 +34,7 @@ M-VAVE, takes you back.
 
 | Platform | Status | Notes |
 | --- | --- | --- |
-| M-VAVE Pocket AMP | Beta | 1.1.0 beta; firmware and [web installer](https://hugelton.github.io/Pendel/) available. |
+| M-VAVE Pocket AMP | Released | 1.1.0; firmware and [web installer](https://hugelton.github.io/Pendel/) available. |
 | Browser | In progress | The simulator in `sim/`. |
 
 ## AI disclaimer
