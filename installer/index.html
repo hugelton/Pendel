@@ -355,7 +355,7 @@ const TEXT = {
     warn: "書き込み中は USB を抜かないでください。",
     install: "インストール", other: "English",
     direct: "USB ケーブルはパソコンに直接つないでください。ハブは避けてください。",
-    beta: "Pendel はベータ版です。不具合は GitHub で知らせてください。このカスタムファームウェアを使ったことで Pocket AMP が壊れたり不具合が起きたりしても、作者は一切の責任を負いません。自己責任でお使いください。",
+    beta: "不具合は GitHub で知らせてください。このカスタムファームウェアを使ったことで Pocket AMP が壊れたり不具合が起きたりしても、作者は一切の責任を負いません。自己責任でお使いください。",
     back: "M-VAVE から公式の Pocket AMP ファームウェアを取得し、未変更の Pocket AMP.fwsc を選んでください。ファイルはこのブラウザ内で確かめ、サーバーへは送りません。Pendel は設定を本体に保存しないので、戻す前に保存するものはありません。",
     officialTitle: "公式ファームウェアに戻す", officialFile: "公式の Pocket AMP.fwsc", officialGo: "公式ファームウェアに戻す",
     officialValid: "公式ファームウェアを確認しました",
@@ -382,7 +382,7 @@ const TEXT = {
     warn: "Do not unplug the USB cable while writing.",
     install: "Install", other: "日本語",
     direct: "Connect the USB cable directly to the computer; avoid hubs.",
-    beta: "Pendel is a beta; please report problems on GitHub. The author accepts no responsibility if your Pocket AMP is damaged or misbehaves because of this custom firmware. Use it at your own risk.",
+    beta: "Please report problems on GitHub. The author accepts no responsibility if your Pocket AMP is damaged or misbehaves because of this custom firmware. Use it at your own risk.",
     back: "Get the official Pocket AMP firmware from M-VAVE and select the unmodified Pocket AMP.fwsc. The browser checks it locally; it is not sent to a server. Pendel keeps no settings on the unit, so there is nothing to save first.",
     officialTitle: "Return to the official firmware", officialFile: "Official Pocket AMP.fwsc", officialGo: "Return to the official firmware",
     officialValid: "Official firmware verified",
@@ -419,7 +419,7 @@ applyLang();
 const sayK = (k, arg = "") => { lastKey = k; lastArg = arg; $("status").textContent = t(k) + arg; };
 const say = (txt) => { lastKey = null; $("status").textContent = txt; };
 const log = (s) => { $("log").textContent += s + "\n"; };
-const meta = {"pkg": "../firmware/pendel-1.1.0-beta.fwsc", "version": "1.1.0-beta", "product": "Pocket AMP_911", "size": 688860, "sha256": "145a26dbafd61ee6d89772939cf739fe1fff85fde7766474ab06b4811a95bb5c"};
+const meta = {"pkg": "../firmware/pendel-1.1.0.fwsc", "version": "1.1.0", "product": "Pocket AMP_911", "size": 688860, "sha256": "4a0ee7b09b34dc39f7320b1322d705a9e75ddf5b207fc82705fc295d35654323"};
 /* the served package as make_site.py pinned it (size, SHA-256): checked when it loads and again before the write */
 const pinned = async (b) => b.length === meta.size && await sha256hex(b) === meta.sha256;
 
